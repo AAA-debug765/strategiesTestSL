@@ -28,6 +28,8 @@ function generateCombos(paramVals: { name: string; values: number[] }[]): Record
 }
 
 // ── Global job store for polling-based progress ──────
+// Use globalThis to share across Turbopack module instances
+
 interface OptJob {
   status: "running" | "done" | "error";
   current: number;
@@ -38,14 +40,22 @@ interface OptJob {
   phase?: string; // e.g. "Pass 1/2 — coarse" or "Pass 2/2 — fine"
 }
 
-const jobs = new Map<string, OptJob>();
+const OPT_JOBS_KEY = "__backtester_opt_jobs__";
+
+function getJobsMap(): Map<string, OptJob> {
+  if (!(globalThis as any)[OPT_JOBS_KEY]) {
+    (globalThis as any)[OPT_JOBS_KEY] = new Map<string, OptJob>();
+  }
+  return (globalThis as any)[OPT_JOBS_KEY];
+}
 
 export function getOptJob(jobId: string): OptJob | undefined {
-  return jobs.get(jobId);
+  return getJobsMap().get(jobId);
 }
 
 // Cleanup old jobs (keep last 10)
 function cleanupJobs() {
+  const jobs = getJobsMap();
   if (jobs.size <= 10) return;
   const keys = [...jobs.keys()];
   for (let i = 0; i < keys.length - 10; i++) {
@@ -63,7 +73,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const { strategyId, candles, rangeOverrides, sortBy = "sharpeRatio", options, funnel = false } = body;
+  const { strategyId, candles, rangeOverrides, sortBy = "maxConsecutiveSl", options, funnel = false } = body;
 
   if (!strategyId) {
     return new Response(JSON.stringify({ error: "strategyId is required" }), {
@@ -121,7 +131,7 @@ export async function POST(request: NextRequest) {
     phase: funnel ? "Starting..." : undefined,
   };
   cleanupJobs();
-  jobs.set(jobId, job);
+  getJobsMap().set(jobId, job);
 
   // Run optimization in background (fire-and-forget)
   if (funnel) {
@@ -182,13 +192,20 @@ export async function POST(request: NextRequest) {
 
       // If cancelled during pass 1, save partial and stop
       if (job.status !== "running") {
-        pass1Results.sort((a, b) => ((b.metrics as Record<string, number>)[sortBy] ?? 0) - ((a.metrics as Record<string, number>)[sortBy] ?? 0));
+        pass1Results.sort((a, b) => ((a.metrics as Record<string, number>)[sortBy] ?? 0) - ((b.metrics as Record<string, number>)[sortBy] ?? 0));
         job.results = pass1Results.slice(0, 100);
         return;
       }
 
       // Sort pass 1, pick top-N
-      pass1Results.sort((a, b) => ((b.metrics as Record<string, number>)[sortBy] ?? 0) - ((a.metrics as Record<string, number>)[sortBy] ?? 0));
+      // Сортировка: maxConsecutiveSl — по возрастанию (меньше = лучше)
+      const sortAsc = sortBy === "maxConsecutiveSl";
+      const sortFn = (a: OptimizeResult, b: OptimizeResult) => {
+        const av = (a.metrics as Record<string, number>)[sortBy] ?? 0;
+        const bv = (b.metrics as Record<string, number>)[sortBy] ?? 0;
+        return sortAsc ? av - bv : bv - av;
+      };
+      pass1Results.sort(sortFn);
       const topResults = pass1Results.slice(0, TOP_N);
 
       // ── Generate fine combos around top-N ──
@@ -236,8 +253,8 @@ export async function POST(request: NextRequest) {
         if (i % YIELD_EVERY === 0) await yieldTick();
       }
 
-      // Final sort and save
-      allResults.sort((a, b) => ((b.metrics as Record<string, number>)[sortBy] ?? 0) - ((a.metrics as Record<string, number>)[sortBy] ?? 0));
+      // Final sort and save (ascending: меньше maxConsecutiveSl = лучше)
+      allResults.sort((a, b) => ((a.metrics as Record<string, number>)[sortBy] ?? 0) - ((b.metrics as Record<string, number>)[sortBy] ?? 0));
       job.results = allResults.slice(0, 100);
       job.status = "done";
 
@@ -275,12 +292,12 @@ export async function POST(request: NextRequest) {
         // Update progress in global store (polling reads from here)
         job.current = i + 1;
 
-        // Periodically sort and save partial results (for cancel)
+        // Periodically sort and save partial results (ascending)
         if (i % 50 === 0 && i > 0) {
           results.sort((a, b) => {
             const av = (a.metrics as Record<string, number>)[sortBy] ?? 0;
             const bv = (b.metrics as Record<string, number>)[sortBy] ?? 0;
-            return bv - av;
+            return av - bv;
           });
           job.results = results.slice(0, 100);
         }
@@ -296,11 +313,11 @@ export async function POST(request: NextRequest) {
         console.error(`[optimize] Total errors: ${errors}/${total}`);
       }
 
-      // Keep partial results always sorted so cancel can pick them up
+      // Keep partial results always sorted (ascending: меньше SL подряд = лучше)
       results.sort((a, b) => {
         const av = (a.metrics as Record<string, number>)[sortBy] ?? 0;
         const bv = (b.metrics as Record<string, number>)[sortBy] ?? 0;
-        return bv - av;
+        return av - bv;
       });
       job.results = results.slice(0, 100); // keep top 100 sorted
 
@@ -326,7 +343,7 @@ export async function DELETE(request: NextRequest) {
     });
   }
 
-  const job = jobs.get(jobId);
+  const job = getOptJob(jobId);
   if (!job) {
     return new Response(JSON.stringify({ error: "Job not found" }), {
       status: 404, headers: { "Content-Type": "application/json" },

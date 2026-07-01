@@ -338,7 +338,7 @@ export function StrategyProvider({ candles, children }: StrategyProviderProps) {
       const res = await fetch("/api/optimize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ strategyId: selectedId, candles, rangeOverrides: paramRanges, sortBy: "sharpeRatio", options: backtestOptions, funnel: funnelMode }),
+        body: JSON.stringify({ strategyId: selectedId, candles, rangeOverrides: paramRanges, sortBy: "maxConsecutiveSl", options: backtestOptions, funnel: funnelMode }),
         signal: abortOptRef.current.signal,
       });
 

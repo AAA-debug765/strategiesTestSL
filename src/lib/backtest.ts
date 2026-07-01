@@ -107,31 +107,20 @@ export function runBacktestEngine(
     if (equityCurve.length > 0) equityCurve[equityCurve.length - 1].value = equity;
   }
 
-  return { trades, equityCurve, metrics: calculateMetrics(trades, equityCurve, initialCapital), params };
+  return { trades, equityCurve, metrics: calculateMetrics(trades), params };
 }
 
-function calculateMetrics(trades: Trade[], equityCurve: { time: number; value: number }[], initialCapital: number): BacktestMetrics {
-  const totalReturnPct = equityCurve.length > 0 ? ((equityCurve[equityCurve.length - 1].value - initialCapital) / initialCapital) * 100 : 0;
-  let maxDrawdownPct = 0; let peak = initialCapital;
-  for (const point of equityCurve) { if (point.value > peak) peak = point.value; const dd = ((peak - point.value) / peak) * 100; if (dd > maxDrawdownPct) maxDrawdownPct = dd; }
-  const wins = trades.filter((t) => t.pnl > 0);
-  const winRate = trades.length > 0 ? (wins.length / trades.length) * 100 : 0;
-  const grossProfit = wins.reduce((s, t) => s + t.pnl, 0);
-  const losses = trades.filter((t) => t.pnl <= 0);
-  const grossLoss = losses.reduce((s, t) => s + Math.abs(t.pnl), 0);
-  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 999.99 : 0;
-  const avgWinPct = wins.length > 0 ? wins.reduce((s, t) => s + t.pnlPct, 0) / wins.length : 0;
-  const avgLossPct = losses.length > 0 ? losses.reduce((s, t) => s + Math.abs(t.pnlPct), 0) / losses.length : 0;
-  let sharpeRatio = 0;
-  if (equityCurve.length > 1) {
-    const returns: number[] = [];
-    for (let i = 1; i < equityCurve.length; i++) { if (equityCurve[i - 1].value > 0) returns.push((equityCurve[i].value - equityCurve[i - 1].value) / equityCurve[i - 1].value); }
-    if (returns.length > 1) {
-      const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
-      const variance = returns.reduce((a, b) => a + (b - mean) ** 2, 0) / (returns.length - 1);
-      const stdDev = Math.sqrt(variance);
-      sharpeRatio = stdDev > 0 ? (mean / stdDev) * Math.sqrt(8760) : 0;
+function calculateMetrics(trades: Trade[]): BacktestMetrics {
+  // Максимальное количество SL подряд
+  let maxConsecutiveSl = 0;
+  let currentStreak = 0;
+  for (const t of trades) {
+    if (t.exitReason === "sl") {
+      currentStreak++;
+      if (currentStreak > maxConsecutiveSl) maxConsecutiveSl = currentStreak;
+    } else {
+      currentStreak = 0;
     }
   }
-  return { totalReturnPct, maxDrawdownPct, sharpeRatio, winRate, totalTrades: trades.length, profitFactor, avgWinPct, avgLossPct };
+  return { totalTrades: trades.length, maxConsecutiveSl };
 }

@@ -29,14 +29,8 @@ export interface Trade {
 }
 
 export interface BacktestMetrics {
-  totalReturnPct: number;
-  maxDrawdownPct: number;
-  sharpeRatio: number;
-  winRate: number;
   totalTrades: number;
-  profitFactor: number;
-  avgWinPct: number;
-  avgLossPct: number;
+  maxConsecutiveSl: number;
 }
 
 export interface BacktestResult {

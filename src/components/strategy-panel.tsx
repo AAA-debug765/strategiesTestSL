@@ -28,11 +28,7 @@ import {
   Play,
   Search,
   Loader2,
-  TrendingUp,
-  TrendingDown,
   Target,
-  BarChart3,
-  Percent,
   Trophy,
   Activity,
   ArrowUpCircle,
@@ -41,6 +37,7 @@ import {
   Clock,
   Zap,
   DollarSign,
+  ShieldAlert,
 } from "lucide-react";
 import { useStrategy, type FeeSettings } from "./strategy-context";
 import EquityChart from "./equity-chart";
@@ -491,20 +488,14 @@ export function StrategyConfig() {
       {backtestResult && (
         <>
           {(() => {
-            const tradeWins = backtestResult.trades.filter((t) => t.pnl > 0).length;
-            const tradeLosses = backtestResult.metrics.totalTrades - tradeWins;
+            const slTrades = backtestResult.trades.filter((t) => t.exitReason === "sl").length;
+            const tpTrades = backtestResult.trades.filter((t) => t.exitReason === "tp").length;
             const metrics = [
-              { label: "Return", value: fmtPct(backtestResult.metrics.totalReturnPct), color: backtestResult.metrics.totalReturnPct >= 0 ? "text-green-500" : "text-red-500", icon: TrendingUp },
-              { label: "Drawdown", value: fmtPct(-backtestResult.metrics.maxDrawdownPct), color: "text-red-400", icon: TrendingDown },
-              { label: "Sharpe", value: backtestResult.metrics.sharpeRatio.toFixed(2), color: backtestResult.metrics.sharpeRatio >= 1 ? "text-green-500" : "text-muted-foreground", icon: BarChart3 },
-              { label: "Win Rate", value: fmtPct(backtestResult.metrics.winRate, 1), color: backtestResult.metrics.winRate >= 50 ? "text-green-500" : "text-red-400", icon: Target },
-              { label: "Trades", value: String(backtestResult.metrics.totalTrades), color: "text-muted-foreground", icon: Activity, wins: tradeWins, losses: tradeLosses },
-              { label: "PF", value: backtestResult.metrics.profitFactor.toFixed(2), color: backtestResult.metrics.profitFactor >= 1.5 ? "text-green-500" : "text-muted-foreground", icon: Trophy },
-              { label: "Avg Win", value: fmtPct(backtestResult.metrics.avgWinPct), color: "text-green-500", icon: Percent },
-              { label: "Avg Loss", value: fmtPct(-backtestResult.metrics.avgLossPct), color: "text-red-400", icon: Percent },
+              { label: "Max SL подряд", value: String(backtestResult.metrics.maxConsecutiveSl), color: backtestResult.metrics.maxConsecutiveSl <= 2 ? "text-green-500" : backtestResult.metrics.maxConsecutiveSl <= 5 ? "text-yellow-500" : "text-red-500", icon: ShieldAlert },
+              { label: "Trades", value: String(backtestResult.metrics.totalTrades), color: "text-muted-foreground", icon: Activity, extra: `${tpTrades} TP / ${slTrades} SL` },
             ];
             return (
-              <div className="grid grid-cols-4 gap-1.5">
+              <div className="grid grid-cols-2 gap-1.5">
                 {metrics.map((m) => (
                   <Card key={m.label} className="border-border/50">
                     <CardContent className="px-2 py-1">
@@ -513,11 +504,8 @@ export function StrategyConfig() {
                         <span className="text-[9px] text-muted-foreground">{m.label}</span>
                       </div>
                       <p className={`text-xs font-semibold leading-tight ${m.color}`}>{m.value}</p>
-                      {"wins" in m && (
-                        <div className="flex gap-1.5">
-                          <span className="text-[9px] text-green-500 font-medium">+{m.wins}</span>
-                          <span className="text-[9px] text-red-500 font-medium">-{m.losses}</span>
-                        </div>
+                      {"extra" in m && (
+                        <p className="text-[9px] text-muted-foreground leading-tight">{m.extra}</p>
                       )}
                     </CardContent>
                   </Card>
@@ -556,9 +544,8 @@ export function StrategyConfig() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-[10px] h-6 py-0">#</TableHead>
-                    <TableHead className="text-[10px] h-6 py-0">Return</TableHead>
-                    <TableHead className="text-[10px] h-6 py-0">Sharpe</TableHead>
-                    <TableHead className="text-[10px] h-6 py-0">Win %</TableHead>
+                    <TableHead className="text-[10px] h-6 py-0">Max SL</TableHead>
+                    <TableHead className="text-[10px] h-6 py-0">Trades</TableHead>
                     {selectedStrategy?.parameters.map((p) => (
                       <TableHead key={p.name} className="text-[10px] h-6 py-0">{p.label}</TableHead>
                     ))}
@@ -569,18 +556,17 @@ export function StrategyConfig() {
                   {optResults.slice(0, 30).map((r, i) => (
                     <TableRow
                       key={i}
-                      className={`${i === 0 ? "bg-yellow-500/5" : ""} ${r.metrics.totalReturnPct > 0 ? "bg-green-500/5" : ""} cursor-pointer`}
+                      className={`${i === 0 ? "bg-yellow-500/5" : ""} cursor-pointer`}
                       onDoubleClick={() => saveAndApplyResult(r)}
                       title="Double-click to save & apply"
                     >
                       <TableCell className="text-[10px] py-0.5 font-medium">{i + 1}</TableCell>
-                      <TableCell className={`text-[10px] py-0.5 font-mono font-medium ${r.metrics.totalReturnPct >= 0 ? "text-green-500" : "text-red-500"}`}>
-                        {fmtPct(r.metrics.totalReturnPct)}
+                      <TableCell className={`text-[10px] py-0.5 font-mono font-medium ${r.metrics.maxConsecutiveSl <= 2 ? "text-green-500" : r.metrics.maxConsecutiveSl <= 5 ? "text-yellow-500" : "text-red-500"}`}>
+                        {r.metrics.maxConsecutiveSl}
                       </TableCell>
-                      <TableCell className="text-[10px] py-0.5 font-mono">{r.metrics.sharpeRatio.toFixed(2)}</TableCell>
-                      <TableCell className="text-[10px] py-0.5 font-mono">{fmtPct(r.metrics.winRate, 1)}</TableCell>
+                      <TableCell className="text-[10px] py-0.5 font-mono">{r.metrics.totalTrades}</TableCell>
                       {selectedStrategy?.parameters.map((p) => (
-                        <TableCell key={p.name} className={`text-[10px] py-0.5 font-mono ${r.metrics.totalReturnPct > 0 ? "text-green-500/80" : ""}`}>{r.params[p.name]}</TableCell>
+                        <TableCell key={p.name} className="text-[10px] py-0.5 font-mono">{r.params[p.name]}</TableCell>
                       ))}
                       <TableCell className="py-0.5">
                         <Button variant="ghost" size="sm" className="h-5 text-[9px] px-1.5" onClick={() => selectBestResult(r)}>View</Button>
