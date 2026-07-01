@@ -36,6 +36,25 @@ export function rsi(candles: CandleData[], period: number): number[] {
   return result;
 }
 
+export function ema(candles: CandleData[], period: number): number[] {
+  const result: number[] = [];
+  const k = 2 / (period + 1);
+  let prev: number | undefined;
+  for (let i = 0; i < candles.length; i++) {
+    if (i < period - 1) { result.push(NaN); continue; }
+    if (i === period - 1) {
+      let sum = 0;
+      for (let j = 0; j < period; j++) sum += candles[j].close;
+      prev = sum / period;
+      result.push(prev);
+      continue;
+    }
+    prev = candles[i].close * k + prev! * (1 - k);
+    result.push(prev);
+  }
+  return result;
+}
+
 export function bollingerBands(
   candles: CandleData[], period: number, stdMultiplier: number
 ): { upper: number[]; middle: number[]; lower: number[] } {

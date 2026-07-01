@@ -1,11 +1,11 @@
 import type { Strategy, CandleData, BacktestResult, BacktestOptions } from "./types";
-import { rsi } from "./helpers";
+import { rsi, ema } from "./helpers";
 import { runBacktestEngine } from "../lib/backtest";
 
 const stochRciStrategy: Strategy = {
   id: "stoch-rci",
   name: "Stochastic RCI",
-  description: "Long when slow StochRSI exits lower zone upward, short when exits upper zone downward.",
+  description: "Long when slow StochRSI exits lower zone upward (price above EMA), short when exits upper zone downward (price below EMA).",
 
   parameters: [
     { name: "rsiPeriod", label: "RSI Period", default: 14, min: 5, max: 50, step: 1 },
@@ -14,12 +14,16 @@ const stochRciStrategy: Strategy = {
     { name: "smoothD", label: "Smooth D", default: 3, min: 1, max: 10, step: 1 },
     { name: "lowerZone", label: "Lower Zone", default: 20, min: 5, max: 45, step: 1 },
     { name: "upperZone", label: "Upper Zone", default: 80, min: 55, max: 95, step: 1 },
+    { name: "emaPeriod", label: "EMA Filter", default: 200, min: 50, max: 300, step: 1 },
   ],
 
   run(candles: CandleData[], params: Record<string, number>, options?: BacktestOptions): BacktestResult {
-    const { rsiPeriod, stochPeriod, smoothK, smoothD, lowerZone, upperZone } = params;
+    const { rsiPeriod, stochPeriod, smoothK, smoothD, lowerZone, upperZone, emaPeriod } = params;
 
     const signals: number[] = new Array(candles.length).fill(0);
+
+    // Step 0: Calculate EMA trend filter
+    const emaValues = ema(candles, emaPeriod);
 
     // Step 1: Calculate RSI
     const rsiValues = rsi(candles, rsiPeriod);
@@ -71,19 +75,20 @@ const stochRciStrategy: Strategy = {
       dValues.push(sum / smoothD);
     }
 
-    // Step 5: Generate signals based on %D crossovers out of zones
+    // Step 5: Generate signals — %D zone exits filtered by EMA trend
     for (let i = 1; i < candles.length; i++) {
-      if (isNaN(dValues[i]) || isNaN(dValues[i - 1])) continue;
+      if (isNaN(dValues[i]) || isNaN(dValues[i - 1]) || isNaN(emaValues[i])) continue;
 
       const prev = dValues[i - 1];
       const curr = dValues[i];
+      const priceAboveEma = candles[i].close >= emaValues[i];
 
-      // Long: %D was in lower zone, now crossed above it
-      if (prev <= lowerZone && curr > lowerZone) {
+      // Long: %D exits lower zone upward AND price above EMA (uptrend)
+      if (prev <= lowerZone && curr > lowerZone && priceAboveEma) {
         signals[i] = 1;
       }
-      // Short: %D was in upper zone, now crossed below it
-      else if (prev >= upperZone && curr < upperZone) {
+      // Short: %D exits upper zone downward AND price below EMA (downtrend)
+      else if (prev >= upperZone && curr < upperZone && !priceAboveEma) {
         signals[i] = -1;
       }
     }
