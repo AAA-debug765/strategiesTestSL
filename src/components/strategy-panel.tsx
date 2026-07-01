@@ -40,7 +40,6 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { useStrategy, type FeeSettings } from "./strategy-context";
-import EquityChart from "./equity-chart";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 // ── Helpers ────────────────────────────────────────────
@@ -369,12 +368,6 @@ export function StrategyConfig() {
     ? `${(comboCount / 1_000).toFixed(1)}K`
     : String(comboCount);
 
-  const capitalK = (feeSettings.initialCapital / 1000).toFixed(
-    feeSettings.initialCapital % 1000 === 0 ? 0 : 1
-  );
-  const capitalLabel = feeSettings.initialCapital >= 1000
-    ? `$${capitalK}k`
-    : `$${feeSettings.initialCapital}`;
 
   return (
     <div ref={panelRef} className="space-y-3">
@@ -499,17 +492,7 @@ export function StrategyConfig() {
             </CardContent>
           </Card>
 
-          {/* Equity Curve */}
-          <Card>
-            <CardHeader className="p-2 pb-0">
-              <CardTitle className="text-[10px] font-medium">Equity Curve ({capitalLabel})</CardTitle>
-            </CardHeader>
-            <CardContent className="p-2">
-              <div className="h-[200px]">
-                <EquityChart data={backtestResult.equityCurve} />
-              </div>
-            </CardContent>
-          </Card>
+          
         </>
       )}
 
