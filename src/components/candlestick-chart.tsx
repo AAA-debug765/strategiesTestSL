@@ -68,12 +68,11 @@ export default function CandlestickChart({
   // Highlighted trade: entry dot + exit dot (gray lines at actual price level)
   const hlEntryRef = useRef<ISeriesApi<"Line"> | null>(null);
   const hlExitRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const [decimals, setDecimals] = useState(-1);
-  // Sync saved decimal precision from localStorage after mount
-  useEffect(() => {
+  const [decimals, setDecimals] = useState(() => {
+    if (typeof window === "undefined") return -1;
     const saved = localStorage.getItem("chart-decimals");
-    if (saved !== null) setDecimals(Number(saved));
-  }, []);
+    return saved !== null ? Number(saved) : -1;
+  });
   const [showDecMenu, setShowDecMenu] = useState(false);
   const decMenuRef = useRef<HTMLDivElement>(null);
   const isFirstDataLoad = useRef(true);
