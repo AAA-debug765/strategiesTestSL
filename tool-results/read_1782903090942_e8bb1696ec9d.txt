@@ -1,0 +1,617 @@
+    60→function formatElapsed(ms: number): string {
+    61→  if (ms < 1000) return `${ms}ms`;
+    62→  const s = Math.floor(ms / 1000);
+    63→  if (s < 60) return `${s}s`;
+    64→  const m = Math.floor(s / 60);
+    65→  return `${m}m ${s % 60}s`;
+    66→}
+    67→
+    68→const STEP_OPTIONS = [1, 0.1, 0.01, 0.001];
+    69→
+    70→function decimalsFromStep(step: number): number {
+    71→  const s = String(step);
+    72→  const dot = s.indexOf(".");
+    73→  return dot === -1 ? 0 : s.length - dot - 1;
+    74→}
+    75→
+    76→// ── WheelInput (non-passive wheel to change value) ────
+    77→
+    78→function WheelInput({
+    79→  value,
+    80→  onChange,
+    81→  step,
+    82→  min,
+    83→  max,
+    84→  className,
+    85→  placeholder,
+    86→}: {
+    87→  value: number;
+    88→  onChange: (v: number) => void;
+    89→  step: number;
+    90→  min?: number;
+    91→  max?: number;
+    92→  className?: string;
+    93→  placeholder?: string;
+    94→}) {
+    95→  const inputRef = useRef<HTMLInputElement>(null);
+    96→  const decimals = decimalsFromStep(step);
+    97→
+    98→  const displayVal = value === 0 ? "" : value.toFixed(decimals);
+    99→
+   100→  const clamp = useCallback((v: number) => {
+   101→    let clamped = Math.round(v * Math.pow(10, decimals)) / Math.pow(10, decimals);
+   102→    if (min != null) clamped = Math.max(min, clamped);
+   103→    if (max != null) clamped = Math.min(max, clamped);
+   104→    return clamped;
+   105→  }, [decimals, min, max]);
+   106→
+   107→  const onWheel = useCallback((e: WheelEvent) => {
+   108→    e.preventDefault();
+   109→    const delta = e.deltaY < 0 ? step : -step;
+   110→    const newVal = clamp(value + delta);
+   111→    if (newVal !== value) onChange(newVal);
+   112→  }, [value, step, clamp, onChange]);
+   113→
+   114→  useEffect(() => {
+   115→    const el = inputRef.current;
+   116→    if (!el) return;
+   117→    el.addEventListener("wheel", onWheel, { passive: false });
+   118→    return () => el.removeEventListener("wheel", onWheel);
+   119→  }, [onWheel]);
+   120→
+   121→  return (
+   122→    <input
+   123→      ref={inputRef}
+   124→      type="text"
+   125→      inputMode="decimal"
+   126→      value={displayVal}
+   127→      placeholder={placeholder}
+   128→      onChange={(e) => {
+   129→        const raw = e.target.value.replace(/[^0-9.]/g, "");
+   130→        if (raw === "" || raw === ".") { onChange(0); return; }
+   131→        const parsed = parseFloat(raw);
+   132→        if (!isNaN(parsed)) onChange(clamp(parsed));
+   133→      }}
+   134→      onFocus={(e) => e.target.select()}
+   135→      suppressHydrationWarning
+   136→      className={`h-5 text-[10px] w-[52px] px-1 bg-background border border-input rounded outline-none focus:ring-1 focus:ring-ring ${className ?? ""}`}
+   137→    />
+   138→  );
+   139→}
+   140→
+   141→// ── Step Select ────────────────────────────────────────
+   142→
+   143→function StepSelect({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+   144→  return (
+   145→    <Select value={String(value)} onValueChange={(v) => onChange(parseFloat(v))}>
+   146→      <SelectTrigger className="h-6 text-[10px] w-[42px] px-1">
+   147→        <SelectValue />
+   148→      </SelectTrigger>
+   149→      <SelectContent className="min-w-[80px]">
+   150→        {STEP_OPTIONS.map((s) => (
+   151→          <SelectItem key={s} value={String(s)} className="text-xs py-1.5">{s}</SelectItem>
+   152→        ))}
+   153→      </SelectContent>
+   154→    </Select>
+   155→  );
+   156→}
+   157→
+   158→// ── Progress Card ──────────────────────────────────────
+   159→
+   160→function OptimizeProgress() {
+   161→  const { optProgress, isOptimizing, funnelMode } = useStrategy();
+   162→  const [now, setNow] = useState(Date.now());
+   163→
+   164→  useEffect(() => {
+   165→    if (!isOptimizing) return;
+   166→    const timer = setInterval(() => setNow(Date.now()), 500);
+   167→    return () => clearInterval(timer);
+   168→  }, [isOptimizing]);
+   169→
+   170→  const { current, total, startTime } = optProgress;
+   171→  if (!isOptimizing || total === 0) return null;
+   172→
+   173→  const remaining = total - current;
+   174→  const pct = Math.round((current / total) * 100);
+   175→  const elapsed = startTime ? now - startTime : 0;
+   176→  const rate = elapsed > 0 ? current / (elapsed / 1000) : 0;
+   177→  const eta = rate > 0 ? remaining / rate : 0;
+   178→
+   179→  return (
+   180→    <div className="space-y-1.5 p-2 rounded-md bg-muted/50 border border-border/50">
+   181→      <div className="flex items-center justify-between">
+   182→        <div className="flex items-center gap-2 text-[10px]">
+   183→          <Loader2 className="h-3 w-3 animate-spin text-yellow-500" />
+   184→          <span className="text-muted-foreground">
+   185→            {current.toLocaleString()} / {total.toLocaleString()}
+   186→            <span className="ml-1 text-blue-400">({remaining.toLocaleString()} left)</span>
+   187→          </span>
+   188→          <span className="font-mono font-medium">{pct}%</span>
+   189→          {funnelMode && (
+   190→            <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-medium">Funnel</span>
+   191→          )}
+   192→          {optProgress.phase && (
+   193→            <span className="text-[9px] text-muted-foreground font-medium">{optProgress.phase}</span>
+   194→          )}
+   195→        </div>
+   196→        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+   197→          <span className="flex items-center gap-0.5">
+   198→            <Clock className="h-2.5 w-2.5" />
+   199→            {formatElapsed(elapsed)}
+   200→          </span>
+   201→          {eta > 1 && (
+   202→            <span className="flex items-center gap-0.5">
+   203→              <Zap className="h-2.5 w-2.5" />
+   204→              ~{formatElapsed(eta * 1000)}
+   205→            </span>
+   206→          )}
+   207→          {rate > 0 && (
+   208→            <span className="font-mono">{rate.toFixed(0)}/s</span>
+   209→          )}
+   210→        </div>
+   211→      </div>
+   212→      <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+   213→        <div
+   214→          className="h-full bg-gradient-to-r from-yellow-500 to-orange-500 rounded-full transition-all duration-300 ease-out"
+   215→          style={{ width: `${pct}%` }}
+   216→        />
+   217→      </div>
+   218→    </div>
+   219→  );
+   220→}
+   221→
+   222→// ── Error Display ──────────────────────────────────────
+   223→
+   224→function ErrorBlock({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+   225→  return (
+   226→    <div className="flex items-start gap-2 rounded-md bg-destructive/10 border border-destructive/20 p-2.5">
+   227→      <AlertCircle className="h-3.5 w-3.5 text-destructive shrink-0 mt-0.5" />
+   228→      <p className="text-[10px] text-destructive flex-1 leading-relaxed">{message}</p>
+   229→      <button
+   230→        onClick={onDismiss}
+   231→        className="text-[10px] text-muted-foreground hover:text-foreground shrink-0 leading-none"
+   232→      >
+   233→        x
+   234→      </button>
+   235→    </div>
+   236→  );
+   237→}
+   238→
+   239→
+   240→function FeeConfigCard() {
+   241→  const { feeSettings, setFeeSettings } = useStrategy();
+   242→
+   243→  const update = (key: keyof FeeSettings, val: number | string | boolean) => {
+   244→    setFeeSettings((prev) => ({ ...prev, [key]: val }));
+   245→  };
+   246→
+   247→  return (
+   248→    <Card>
+   249→      <CardHeader className="px-3 py-1 pb-0">
+   250→        <CardTitle className="text-xs font-medium flex items-center gap-1.5">
+   251→          <DollarSign className="h-3.5 w-3.5" />
+   252→          Capital / TP / SL / Fee
+   253→        </CardTitle>
+   254→      </CardHeader>
+   255→      <CardContent className="px-3 py-1.5">
+   256→        <div className="flex items-center gap-1.5">
+   257→          {/* Cap */}
+   258→          <div className="flex items-center gap-1 flex-1 min-w-0">
+   259→            <span className="text-[10px] text-muted-foreground shrink-0">Cap</span>
+   260→            <Input type="number" value={feeSettings.initialCapital}
+   261→              onChange={(e) => update("initialCapital", parseFloat(e.target.value) || 0)}
+   262→              className="h-6 text-[10px] w-full min-w-0 px-1" step={100} min={0} />
+   263→          </div>
+   264→          {/* TP */}
+   265→          <div className="flex items-center gap-1 flex-1 min-w-0">
+   266→            <span className="text-[10px] text-muted-foreground shrink-0">TP</span>
+   267→            <Input type="number"
+   268→              value={feeSettings.tpPrice}
+   269→              onChange={(e) => { const v = parseFloat(e.target.value) || 0; update("tpPrice", v); }}
+   270→              className="h-6 text-[10px] w-full min-w-0 px-1" step={feeSettings.tpStep} min={0} />
+   271→            <Select value={String(feeSettings.tpStep)} onValueChange={(v) => update("tpStep", parseFloat(v))}>
+   272→              <SelectTrigger className="h-6 text-[10px] w-[42px] shrink-0 px-0.5">
+   273→                <SelectValue />
+   274→              </SelectTrigger>
+   275→              <SelectContent className="min-w-[60px]">
+   276→                {STEP_OPTIONS.map((s) => (
+   277→                  <SelectItem key={s} value={String(s)} className="text-xs py-1">{s}</SelectItem>
+   278→                ))}
+   279→              </SelectContent>
+   280→            </Select>
+   281→          </div>
+   282→          {/* SL */}
+   283→          <div className="flex items-center gap-1 flex-1 min-w-0">
+   284→            <span className="text-[10px] text-muted-foreground shrink-0">SL</span>
+   285→            <Input type="number"
+   286→              value={feeSettings.slPrice}
+   287→              onChange={(e) => { const v = parseFloat(e.target.value) || 0; update("slPrice", v); }}
+   288→              className="h-6 text-[10px] w-full min-w-0 px-1" step={feeSettings.slStep} min={0} />
+   289→            <Select value={String(feeSettings.slStep)} onValueChange={(v) => update("slStep", parseFloat(v))}>
+   290→              <SelectTrigger className="h-6 text-[10px] w-[42px] shrink-0 px-0.5">
+   291→                <SelectValue />
+   292→              </SelectTrigger>
+   293→              <SelectContent className="min-w-[60px]">
+   294→                {STEP_OPTIONS.map((s) => (
+   295→                  <SelectItem key={s} value={String(s)} className="text-xs py-1">{s}</SelectItem>
+   296→                ))}
+   297→              </SelectContent>
+   298→            </Select>
+   299→          </div>
+   300→          {/* Fee */}
+   301→          <div className="flex items-center gap-1 shrink-0">
+   302→            <span className="text-[10px] text-muted-foreground shrink-0">Fee%</span>
+   303→            <Input type="number" value={feeSettings.feePct}
+   304→              onChange={(e) => update("feePct", parseFloat(e.target.value) || 0)}
+   305→              className="h-6 text-[10px] w-[50px] px-1" step={0.01} min={0} max={1} />
+   306→          </div>
+   307→          {/* Exit on Signal checkbox */}
+   308→          <label className="shrink-0 flex items-center gap-1 cursor-pointer select-none">
+   309→            <span className="text-[10px] text-muted-foreground">Sig</span>
+   310→            <input
+   311→              type="checkbox"
+   312→              checked={feeSettings.exitOnSignal}
+   313→              onChange={(e) => update("exitOnSignal", e.target.checked)}
+   314→              className="h-3.5 w-3.5 accent-green-500 cursor-pointer"
+   315→            />
+   316→          </label>
+   317→        </div>
+   318→      </CardContent>
+   319→    </Card>
+   320→  );
+   321→}
+   322→// ── Right Sidebar ──────────────────────────────────────
+   323→
+   324→export function StrategyConfig() {
+   325→  const panelRef = useRef<HTMLDivElement>(null);
+   326→  const {
+   327→    allStrategies, strategies, selectedId, setSelectedId, selectedStrategy,
+   328→    paramValues, setParamValues, paramRanges, setParamRanges,
+   329→    backtestResult, isBacktesting, backtestError, setBacktestError,
+   330→    isOptimizing, optError, setOptError,
+   331→    optProgress, optResults,
+   332→    runBacktest, runOptimize, cancelOptimize, selectBestResult, saveAndApplyResult,
+   333→    feeSettings,
+   334→    funnelMode, setFunnelMode,
+   335→  } = useStrategy();
+   336→
+   337→  // Block page scroll when focused on a number input inside this panel
+   338→  useEffect(() => {
+   339→    const panel = panelRef.current;
+   340→    if (!panel) return;
+   341→    const handler = (e: WheelEvent) => {
+   342→      const el = e.target as HTMLElement;
+   343→      if (el.closest && el.closest('input[type="number"]')) {
+   344→        e.stopPropagation();
+   345→      }
+   346→    };
+   347→    panel.addEventListener('wheel', handler, { passive: false });
+   348→    return () => panel.removeEventListener('wheel', handler);
+   349→  }, []);
+   350→
+   351→  const comboCount = useMemo(() => {
+   352→    if (!selectedStrategy) return 0;
+   353→    let total = 1;
+   354→    for (const p of selectedStrategy.parameters) {
+   355→      const r = paramRanges[p.name];
+   356→      const lo = r?.min ?? p.min;
+   357→      const hi = r?.max ?? p.max;
+   358→      const step = r?.step ?? p.step;
+   359→      if (step <= 0 || hi < lo) return 0;
+   360→      const count = Math.floor((hi - lo) / step) + 1;
+   361→      total *= count;
+   362→    }
+   363→    return total;
+   364→  }, [selectedStrategy, paramRanges]);
+   365→
+   366→  const comboLabel = comboCount >= 1_000_000
+   367→    ? `${(comboCount / 1_000_000).toFixed(1)}M`
+   368→    : comboCount >= 1_000
+   369→    ? `${(comboCount / 1_000).toFixed(1)}K`
+   370→    : String(comboCount);
+   371→
+   372→  const capitalK = (feeSettings.initialCapital / 1000).toFixed(
+   373→    feeSettings.initialCapital % 1000 === 0 ? 0 : 1
+   374→  );
+   375→  const capitalLabel = feeSettings.initialCapital >= 1000
+   376→    ? `$${capitalK}k`
+   377→    : `$${feeSettings.initialCapital}`;
+   378→
+   379→  return (
+   380→    <div ref={panelRef} className="space-y-3">
+   381→      {/* ── Strategy Config ─────────────────────────── */}
+   382→      <Card>
+   383→        <CardHeader className="p-3 pb-0">
+   384→          <CardTitle className="text-xs font-medium flex items-center gap-1.5">
+   385→            <Target className="h-3.5 w-3.5" />
+   386→            Strategy
+   387→            <Badge variant="outline" className="text-[9px] px-1.5 ml-auto">FUTURES</Badge>
+   388→          </CardTitle>
+   389→        </CardHeader>
+   390→        <CardContent className="p-3 space-y-3">
+   391→          <div className="flex items-end gap-2">
+   392→            <Select value={selectedId} onValueChange={setSelectedId}>
+   393→              <SelectTrigger className="h-7 text-xs flex-1">
+   394→                <SelectValue />
+   395→              </SelectTrigger>
+   396→              <SelectContent>
+   397→                {strategies.map((s) => (
+   398→                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+   399→                ))}
+   400→              </SelectContent>
+   401→            </Select>
+   402→            <Button onClick={runBacktest} disabled={isBacktesting || isOptimizing} size="sm" className="h-7 gap-1.5 text-xs">
+   403→              {isBacktesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+   404→              Run
+   405→            </Button>
+   406→            <Button variant="outline" onClick={runOptimize} disabled={isBacktesting || isOptimizing} size="sm" className="h-7 gap-1.5 text-xs">
+   407→              {isOptimizing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+   408→              Optimize
+   409→            </Button>
+   410→            <span className={`text-[10px] tabular-nums shrink-0 ${comboCount > 500_000 ? "text-red-400" : comboCount > 50_000 ? "text-yellow-400" : "text-muted-foreground"}`}>
+   411→              {comboLabel}
+   412→            </span>
+   413→            <label className="shrink-0 flex items-center gap-1 cursor-pointer select-none">
+   414→              <span className="text-[10px] text-muted-foreground">Funnel</span>
+   415→              <input
+   416→                type="checkbox"
+   417→                checked={funnelMode}
+   418→                onChange={(e) => setFunnelMode(e.target.checked)}
+   419→                className="h-3.5 w-3.5 accent-foreground cursor-pointer"
+   420→              />
+   421→            </label>
+   422→            {isOptimizing && (
+   423→              <Button variant="ghost" size="sm" onClick={cancelOptimize} className="h-7 text-[10px] px-2">Stop</Button>
+   424→            )}
+   425→          </div>
+   426→
+   427→          {selectedStrategy && (
+   428→            <p className="text-[10px] text-muted-foreground leading-relaxed">{selectedStrategy.description}</p>
+   429→          )}
+   430→
+   431→          {selectedStrategy && (
+   432→            <Table>
+   433→              <TableHeader>
+   434→                <TableRow>
+   435→                  <TableHead className="text-[10px] h-6 py-0">Param</TableHead>
+   436→                  <TableHead className="text-[10px] h-6 py-0 w-[60px]">Value</TableHead>
+   437→                  <TableHead className="text-[10px] h-6 py-0 w-[55px]">Min</TableHead>
+   438→                  <TableHead className="text-[10px] h-6 py-0 w-[55px]">Max</TableHead>
+   439→                  <TableHead className="text-[10px] h-6 py-0 w-[60px]">Step</TableHead>
+   440→                </TableRow>
+   441→              </TableHeader>
+   442→              <TableBody>
+   443→                {selectedStrategy.parameters.map((p) => (
+   444→                  <TableRow key={p.name}>
+   445→                    <TableCell className="text-[10px] font-medium py-1">{p.label}</TableCell>
+   446→                    <TableCell className="py-1">
+   447→                      <Input type="number" value={paramValues[p.name] ?? p.default}
+   448→                        onChange={(e) => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= 0) setParamValues((prev) => ({ ...prev, [p.name]: v })); }}
+   449→                        className="h-5 text-[10px] w-[60px] px-1.5" step={p.step} min={0} />
+   450→                    </TableCell>
+   451→                    <TableCell className="py-1">
+   452→                      <Input type="number" value={paramRanges[p.name]?.min ?? p.min}
+   453→                        onChange={(e) => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= 0) setParamRanges((prev) => ({ ...prev, [p.name]: { ...prev[p.name], min: v } })); }}
+   454→                        className="h-5 text-[10px] w-[55px] px-1.5" step={p.step} min={0} />
+   455→                    </TableCell>
+   456→                    <TableCell className="py-1">
+   457→                      <Input type="number" value={paramRanges[p.name]?.max ?? p.max}
+   458→                        onChange={(e) => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= 0) setParamRanges((prev) => ({ ...prev, [p.name]: { ...prev[p.name], max: v } })); }}
+   459→                        className="h-5 text-[10px] w-[55px] px-1.5" step={p.step} min={0} />
+   460→                    </TableCell>
+   461→                    <TableCell className="py-1">
+   462→                      <Input type="number" value={paramRanges[p.name]?.step ?? p.step}
+   463→                        onChange={(e) => { const v = parseFloat(e.target.value); if (!isNaN(v) && v >= 0) setParamRanges((prev) => ({ ...prev, [p.name]: { ...prev[p.name], step: v } })); }}
+   464→                        className="h-5 text-[10px] w-[60px] px-1.5" min={0} />
+   465→                    </TableCell>
+   466→                  </TableRow>
+   467→                ))}
+   468→              </TableBody>
+   469→            </Table>
+   470→          )}
+   471→
+   472→          <OptimizeProgress />
+   473→
+   474→          {backtestError && (
+   475→            <ErrorBlock message={backtestError} onDismiss={() => setBacktestError(null)} />
+   476→          )}
+   477→
+   478→          {optError && (
+   479→            <ErrorBlock message={optError} onDismiss={() => setOptError(null)} />
+   480→          )}
+   481→        </CardContent>
+   482→      </Card>
+   483→
+   484→      {/* ── TP / SL / Fee Card ──────────────────────── */}
+   485→      <FeeConfigCard />
+   486→
+   487→      {/* ── Metrics ─────────────────────────────────── */}
+   488→      {backtestResult && (
+   489→        <>
+   490→          {(() => {
+   491→            const slTrades = backtestResult.trades.filter((t) => t.exitReason === "sl").length;
+   492→            const tpTrades = backtestResult.trades.filter((t) => t.exitReason === "tp").length;
+   493→            const metrics = [
+   494→              { label: "Max SL подряд", value: String(backtestResult.metrics.maxConsecutiveSl), color: backtestResult.metrics.maxConsecutiveSl <= 2 ? "text-green-500" : backtestResult.metrics.maxConsecutiveSl <= 5 ? "text-yellow-500" : "text-red-500", icon: ShieldAlert },
+   495→              { label: "Trades", value: String(backtestResult.metrics.totalTrades), color: "text-muted-foreground", icon: Activity, extra: `${tpTrades} TP / ${slTrades} SL` },
+   496→            ];
+   497→            return (
+   498→              <div className="grid grid-cols-2 gap-1.5">
+   499→                {metrics.map((m) => (
+   500→                  <Card key={m.label} className="border-border/50">
+   501→                    <CardContent className="px-2 py-1">
+   502→                      <div className="flex items-center gap-1">
+   503→                        <m.icon className={`h-2.5 w-2.5 ${m.color}`} />
+   504→                        <span className="text-[9px] text-muted-foreground">{m.label}</span>
+   505→                      </div>
+   506→                      <p className={`text-xs font-semibold leading-tight ${m.color}`}>{m.value}</p>
+   507→                      {"extra" in m && (
+   508→                        <p className="text-[9px] text-muted-foreground leading-tight">{m.extra}</p>
+   509→                      )}
+   510→                    </CardContent>
+   511→                  </Card>
+   512→                ))}
+   513→              </div>
+   514→            );
+   515→          })()}
+   516→
+   517→          {/* Equity Curve */}
+   518→          <Card>
+   519→            <CardHeader className="p-2 pb-0">
+   520→              <CardTitle className="text-[10px] font-medium">Equity Curve ({capitalLabel})</CardTitle>
+   521→            </CardHeader>
+   522→            <CardContent className="p-2">
+   523→              <div className="h-[200px]">
+   524→                <EquityChart data={backtestResult.equityCurve} />
+   525→              </div>
+   526→            </CardContent>
+   527→          </Card>
+   528→        </>
+   529→      )}
+   530→
+   531→      {/* ── Optimization Results ─────────────────────── */}
+   532→      {optResults.length > 0 && (
+   533→        <Card>
+   534→          <CardHeader className="p-2 pb-0">
+   535→            <CardTitle className="text-[10px] font-medium flex items-center gap-1.5">
+   536→              <Trophy className="h-3 w-3" />
+   537→              Top {Math.min(optResults.length, 30)}
+   538→              <Badge variant="secondary" className="text-[9px] px-1.5">{optResults.length} tested</Badge>
+   539→            </CardTitle>
+   540→          </CardHeader>
+   541→          <CardContent className="p-2">
+   542→            <div className="max-h-[350px] overflow-y-auto">
+   543→              <Table>
+   544→                <TableHeader>
+   545→                  <TableRow>
+   546→                    <TableHead className="text-[10px] h-6 py-0">#</TableHead>
+   547→                    <TableHead className="text-[10px] h-6 py-0">Max SL</TableHead>
+   548→                    <TableHead className="text-[10px] h-6 py-0">Trades</TableHead>
+   549→                    {selectedStrategy?.parameters.map((p) => (
+   550→                      <TableHead key={p.name} className="text-[10px] h-6 py-0">{p.label}</TableHead>
+   551→                    ))}
+   552→                    <TableHead className="text-[10px] h-6 py-0 w-8"></TableHead>
+   553→                  </TableRow>
+   554→                </TableHeader>
+   555→                <TableBody>
+   556→                  {optResults.slice(0, 30).map((r, i) => (
+   557→                    <TableRow
+   558→                      key={i}
+   559→                      className={`${i === 0 ? "bg-yellow-500/5" : ""} cursor-pointer`}
+   560→                      onDoubleClick={() => saveAndApplyResult(r)}
+   561→                      title="Double-click to save & apply"
+   562→                    >
+   563→                      <TableCell className="text-[10px] py-0.5 font-medium">{i + 1}</TableCell>
+   564→                      <TableCell className={`text-[10px] py-0.5 font-mono font-medium ${r.metrics.maxConsecutiveSl <= 2 ? "text-green-500" : r.metrics.maxConsecutiveSl <= 5 ? "text-yellow-500" : "text-red-500"}`}>
+   565→                        {r.metrics.maxConsecutiveSl}
+   566→                      </TableCell>
+   567→                      <TableCell className="text-[10px] py-0.5 font-mono">{r.metrics.totalTrades}</TableCell>
+   568→                      {selectedStrategy?.parameters.map((p) => (
+   569→                        <TableCell key={p.name} className="text-[10px] py-0.5 font-mono">{r.params[p.name]}</TableCell>
+   570→                      ))}
+   571→                      <TableCell className="py-0.5">
+   572→                        <Button variant="ghost" size="sm" className="h-5 text-[9px] px-1.5" onClick={() => selectBestResult(r)}>View</Button>
+   573→                      </TableCell>
+   574→                    </TableRow>
+   575→                  ))}
+   576→                </TableBody>
+   577→              </Table>
+   578→            </div>
+   579→            <p className="text-[9px] text-muted-foreground mt-1.5">Double-click a row to save params (persisted on reload)</p>
+   580→          </CardContent>
+   581→        </Card>
+   582→      )}
+   583→    </div>
+   584→  );
+   585→}
+   586→
+   587→// ── Trades Panel ───────────────────────────────────────
+   588→
+   589→export function TradesPanel() {
+   590→  const { backtestResult, highlightedTrade, setHighlightedTrade } = useStrategy();
+   591→
+   592→  const trades = backtestResult?.trades ?? [];
+   593→
+   594→  return (
+   595→    <Card className="border-0 rounded-none">
+   596→      <CardHeader className="p-2 pb-0">
+   597→        <CardTitle className="text-[10px] font-medium flex items-center gap-2">
+   598→          Trades
+   599→          <Badge variant="secondary" className="text-[9px] px-1.5">{trades.length}</Badge>
+   600→        </CardTitle>
+   601→      </CardHeader>
+   602→      <CardContent className="p-2">
+   603→        {!backtestResult || trades.length === 0 ? (
+   604→          <p className="text-[10px] text-muted-foreground text-center py-4">Run a backtest to see trades</p>
+   605→        ) : (
+   606→        <Table>
+   607→          <TableHeader>
+   608→            <TableRow>
+   609→              <TableHead className="text-[10px] h-6 py-0">#</TableHead>
+   610→              <TableHead className="text-[10px] h-6 py-0">Type</TableHead>
+   611→              <TableHead className="text-[10px] h-6 py-0">Entry</TableHead>
+   612→              <TableHead className="text-[10px] h-6 py-0">Price In</TableHead>
+   613→              <TableHead className="text-[10px] h-6 py-0">Price Out</TableHead>
+   614→              <TableHead className="text-[10px] h-6 py-0">PnL %</TableHead>
+   615→              <TableHead className="text-[10px] h-6 py-0">PnL $</TableHead>
+   616→              <TableHead className="text-[10px] h-6 py-0">Fee $</TableHead>
+   617→              <TableHead className="text-[10px] h-6 py-0">Reason</TableHead>
+   618→            </TableRow>
+   619→          </TableHeader>
+   620→          <TableBody>
+   621→            {trades.map((t, i) => {
+   622→              const d = new Date(t.entryTime * 1000);
+   623→              const isWin = t.pnl > 0;
+   624→              const isHighlighted = highlightedTrade === i;
+   625→              return (
+   626→                <TableRow
+   627→                  key={i}
+   628→                  className={`cursor-pointer ${isHighlighted ? "bg-yellow-500/15" : "hover:bg-muted/50"}`}
+   629→                  onClick={() => setHighlightedTrade(isHighlighted ? null : i)}
+   630→                >
+   631→                  <TableCell className="text-[10px] py-0.5">{i + 1}</TableCell>
+   632→                  <TableCell className="text-[10px] py-0.5">
+   633→                    {t.type === "long" ? (
+   634→                      <Badge variant="outline" className="text-[9px] px-1 py-0 text-green-500 border-green-500/30 bg-green-500/5">
+   635→                        <ArrowUpCircle className="h-2.5 w-2.5 mr-0.5" />
+   636→                        LONG
+   637→                      </Badge>
+   638→                    ) : (
+   639→                      <Badge variant="outline" className="text-[9px] px-1 py-0 text-red-500 border-red-500/30 bg-red-500/5">
+   640→                        <ArrowDownCircle className="h-2.5 w-2.5 mr-0.5" />
+   641→                        SHORT
+   642→                      </Badge>
+   643→                    )}
+   644→                  </TableCell>
+   645→                  <TableCell className="text-[10px] py-0.5 font-mono">
+   646→                    {d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}{" "}
+   647→                    {d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })}
+   648→                  </TableCell>
+   649→                  <TableCell className="text-[10px] py-0.5 font-mono">{fmtPrice(t.entryPrice)}</TableCell>
+   650→                  <TableCell className="text-[10px] py-0.5 font-mono">{fmtPrice(t.exitPrice)}</TableCell>
+   651→                  <TableCell className={`text-[10px] py-0.5 font-mono ${isWin ? "text-green-500" : "text-red-500"}`}>
+   652→                    {fmtPct(t.pnlPct)}
+   653→                  </TableCell>
+   654→                  <TableCell className={`text-[10px] py-0.5 font-mono ${isWin ? "text-green-500" : "text-red-500"}`}>
+   655→                    {fmtUsdt(t.pnl)}
+   656→                  </TableCell>
+   657→                  <TableCell className="text-[10px] py-0.5 font-mono text-muted-foreground">
+   658→                    {t.fee > 0 ? `-$${t.fee.toFixed(2)}` : "-"}
+   659→                  </TableCell>
+   660→                  <TableCell className="text-[10px] py-0.5">
+   661→                    {t.exitReason === "tp" && <Badge variant="outline" className="text-[8px] px-1 py-0 text-green-400 border-green-400/30">TP</Badge>}
+   662→                    {t.exitReason === "sl" && <Badge variant="outline" className="text-[8px] px-1 py-0 text-red-400 border-red-400/30">SL</Badge>}
+   663→                    {t.exitReason === "signal" && <span className="text-[9px] text-muted-foreground">SIG</span>}
+   664→                    {t.exitReason === "eod" && <span className="text-[9px] text-muted-foreground">EOD</span>}
+   665→                    {!t.exitReason && <span className="text-[9px] text-muted-foreground">-</span>}
+   666→                  </TableCell>
+   667→                </TableRow>
+   668→              );
+   669→            })}
+   670→          </TableBody>
+   671→        </Table>
+   672→        )}
+   673→      </CardContent>
+   674→    </Card>
+   675→  );
+   676→}

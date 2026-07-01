@@ -5,7 +5,7 @@
 
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,13 +17,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Download, TrendingUp, Loader2, AlertCircle } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import CandlestickChart from "@/components/candlestick-chart";
 import { StrategyProvider, useStrategy } from "@/components/strategy-context";
 import { StrategyConfig, TradesPanel } from "@/components/strategy-panel";
 import { BuildBadge } from "@/components/build-badge";
 import { useDataLoader } from "@/hooks/use-data-loader";
 import { buildTradeMarkers } from "@/lib/trade-markers";
-import { SYMBOLS, INTERVALS } from "@/types";
+import { SYMBOLS, INTERVALS, getDateDaysAgo, formatDate } from "@/types";
 
 // ── Inner content (needs strategy context) ─────────────
 
