@@ -72,11 +72,9 @@ function AppContent({ candles, isLoading }: { candles: import("@/types").Candle[
             </div>
           )}
         </div>
-        {candles.length > 0 && (
-          <div className="shrink-0 h-[33.333vh] overflow-y-auto border-t border-border bg-card">
+        <div className="shrink-0 h-[33.333vh] overflow-y-auto border-t border-border bg-card">
             <TradesPanel />
           </div>
-        )}
       </div>
 
       {/* RIGHT — Strategy panel 30% */}
