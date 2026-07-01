@@ -7,8 +7,9 @@ import geometryRelease from "./geometry-release";
 import memoryHole from "./memory-hole";
 import candleEnergyStrategy from "./candle-energy";
 import alternateStrategy from "./alternate";
+import stochRciStrategy from "./stoch-rci";
 
-export const strategies: Strategy[] = [maCrossStrategy, rsiStrategy, bollingerStrategy, compressionStateMachine, geometryRelease, memoryHole, candleEnergyStrategy, alternateStrategy];
+export const strategies: Strategy[] = [maCrossStrategy, rsiStrategy, bollingerStrategy, compressionStateMachine, geometryRelease, memoryHole, candleEnergyStrategy, alternateStrategy, stochRciStrategy];
 export function getStrategy(id: string): Strategy | undefined {
   return strategies.find((s) => s.id === id);
 }

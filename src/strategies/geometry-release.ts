@@ -1,212 +1,65 @@
-import type {
-    Strategy,
-    CandleData,
-    BacktestResult,
-    BacktestOptions
-} from "./types";
-
+import type { Strategy, CandleData, BacktestResult, BacktestOptions } from "./types";
 import { runBacktestEngine } from "../lib/backtest";
 
 const geometryRelease: Strategy = {
+  id: "geometry-release-v1",
+  name: "Geometry Release",
+  description: "Detects compression via low efficiency, then enters on strong breakout candle.",
 
-    id: "geometry-release-v1",
+  parameters: [
+    { name: "window", label: "Window", default: 20, min: 5, max: 60, step: 1 },
+    { name: "efficiencyThreshold", label: "Efficiency", default: 0.3, min: 0.05, max: 0.8, step: 0.05 },
+    { name: "bodyFactor", label: "Body Factor", default: 1.3, min: 1.0, max: 3.0, step: 0.1 },
+    { name: "cooldown", label: "Cooldown", default: 10, min: 0, max: 50, step: 1 },
+  ],
 
-    name: "Geometry Release",
+  run(candles: CandleData[], params: Record<string, number>, options?: BacktestOptions): BacktestResult {
+    const { window, efficiencyThreshold, bodyFactor, cooldown: cooldownBars } = params;
 
-    description:
-        "Trajectory geometry without indicators.",
+    const signals: number[] = new Array(candles.length).fill(0);
+    let cd = 0;
+    let avgBody = 0;
 
-    parameters: [
+    for (let i = window + 1; i < candles.length; i++) {
+      if (cd > 0) { cd--; continue; }
 
-        {
-            name: "window",
-            label: "Window",
-            default: 30,
-            min: 10,
-            max: 80,
-            step: 1
-        },
+      // Calculate path and displacement over window
+      let path = 0;
+      let displacement = 0;
+      let bodySum = 0;
 
-        {
-            name: "curvatureThreshold",
-            label: "Curvature",
-            default: 0.0018,
-            min: 0.0002,
-            max: 0.01,
-            step: 0.0002
-        },
+      for (let j = i - window; j < i; j++) {
+        const dx = candles[j].close - candles[j].open;
+        path += Math.abs(dx);
+        displacement += dx;
+        bodySum += Math.abs(dx);
+      }
 
-        {
-            name: "efficiencyThreshold",
-            label: "Efficiency",
-            default: 0.18,
-            min: 0.02,
-            max: 0.8,
-            step: 0.02
-        },
+      avgBody = bodySum / window;
+      const efficiency = path === 0 ? 0 : Math.abs(displacement) / path;
 
-        {
-            name: "releaseFactor",
-            label: "Release",
-            default: 0.70,
-            min: 0.2,
-            max: 1.0,
-            step: 0.05
-        },
+      // Compression = low directional efficiency (choppy movement)
+      const compressed = efficiency < efficiencyThreshold;
 
-        {
-            name: "bodyFactor",
-            label: "Body",
-            default: 1.8,
-            min: 1,
-            max: 5,
-            step: 0.1
-        },
+      if (!compressed) continue;
 
-        {
-            name: "cooldown",
-            label: "Cooldown",
-            default: 20,
-            min: 0,
-            max: 100,
-            step: 1
-        }
+      // Check current candle: must be strong (body > avgBody * factor)
+      const current = candles[i];
+      const currentBody = Math.abs(current.close - current.open);
 
-    ],
+      if (currentBody < avgBody * bodyFactor) continue;
 
-    run(
-        candles: CandleData[],
-        params: Record<string, number>,
-        options?: BacktestOptions
-    ): BacktestResult {
-
-        const {
-
-            window,
-
-            curvatureThreshold,
-
-            efficiencyThreshold,
-
-            releaseFactor,
-
-            bodyFactor,
-
-            cooldown
-
-        } = params;
-
-        const signals = new Array(candles.length).fill(0);
-
-        let cd = 0;
-
-        let previousCurvature = 0;
-
-        for (let i = window + 5; i < candles.length; i++) {
-
-            if (cd > 0) {
-                cd--;
-                continue;
-            }
-
-            let path = 0;
-
-            let displacement = 0;
-
-            let curvature = 0;
-
-            let avgBody = 0;
-
-            for (let j = i - window; j < i; j++) {
-
-                const dx = candles[j].close - candles[j].open;
-
-                path += Math.abs(dx);
-
-                displacement += dx;
-
-                avgBody += Math.abs(dx);
-
-            }
-
-            avgBody /= window;
-
-            for (let j = i - window + 2; j < i; j++) {
-
-                const d0 = candles[j - 2].close - candles[j - 2].open;
-
-                const d1 = candles[j - 1].close - candles[j - 1].open;
-
-                const d2 = candles[j].close - candles[j].open;
-
-                curvature += Math.abs(d2 - 2 * d1 + d0);
-
-            }
-
-            curvature /= window;
-
-            const efficiency =
-                path === 0
-                    ? 0
-                    : Math.abs(displacement) / path;
-
-            const currentBody =
-                Math.abs(
-                    candles[i].close -
-                    candles[i].open
-                );
-
-            const release =
-                previousCurvature > 0 &&
-                curvature <
-                    previousCurvature *
-                        releaseFactor;
-
-            const compressed =
-                curvature >
-                    curvatureThreshold &&
-                efficiency <
-                    efficiencyThreshold;
-
-            if (
-                compressed &&
-                release &&
-                currentBody >
-                    avgBody * bodyFactor
-            ) {
-
-                if (
-                    candles[i].close >
-                    candles[i].open
-                ) {
-
-                    signals[i] = 1;
-
-                    cd = cooldown;
-
-                } else {
-
-                    signals[i] = -1;
-
-                    cd = cooldown;
-
-                }
-
-            }
-
-            previousCurvature = curvature;
-
-        }
-
-        return runBacktestEngine(
-            candles,
-            signals,
-            params,
-            options
-        );
-
+      // Direction from candle color
+      if (current.close > current.open) {
+        signals[i] = 1;
+      } else {
+        signals[i] = -1;
+      }
+      cd = Math.round(cooldownBars);
     }
 
+    return runBacktestEngine(candles, signals, params, options);
+  },
 };
 
 export default geometryRelease;

@@ -4,13 +4,15 @@ import { runBacktestEngine } from "../lib/backtest";
 const candleEnergyStrategy: Strategy = {
   id: "candle-energy",
   name: "Candle Energy",
-  description: "Measures bull/bear energy from candle body, close position, and wick rejection over a lookback window. Enters on strong confirmation candle with high body ratio. Cooldown between trades filters noise.",
+  description: "Measures bull/bear energy from candle body and close position over lookback. Enters on strong confirmation candle.",
+
   parameters: [
-    { name: "lookback", label: "Lookback", default: 7, min: 3, max: 20, step: 1 },
-    { name: "energyThreshold", label: "Energy Threshold", default: 3.5, min: 1.0, max: 10.0, step: 0.5 },
-    { name: "bodyRatio", label: "Min Body Ratio", default: 0.65, min: 0.3, max: 0.95, step: 0.05 },
-    { name: "cooldown", label: "Cooldown", default: 20, min: 1, max: 100, step: 1 },
+    { name: "lookback", label: "Lookback", default: 5, min: 3, max: 15, step: 1 },
+    { name: "energyThreshold", label: "Energy Threshold", default: 1.5, min: 0.5, max: 5.0, step: 0.5 },
+    { name: "bodyRatio", label: "Min Body Ratio", default: 0.5, min: 0.3, max: 0.9, step: 0.05 },
+    { name: "cooldown", label: "Cooldown", default: 10, min: 1, max: 50, step: 1 },
   ],
+
   run(candles: CandleData[], params: Record<string, number>, options?: BacktestOptions): BacktestResult {
     const { lookback, energyThreshold, bodyRatio, cooldown } = params;
 
@@ -30,17 +32,11 @@ const candleEnergyStrategy: Strategy = {
 
         const body = Math.abs(c.close - c.open);
         const closePosition = (c.close - c.low) / range;
-        const upperReject = (c.high - Math.max(c.close, c.open)) / range;
-        const lowerReject = (Math.min(c.close, c.open) - c.low) / range;
 
         if (c.close > c.open) {
-          bullEnergy += body / range;
-          bullEnergy += closePosition;
-          bullEnergy -= upperReject;
+          bullEnergy += body / range + closePosition;
         } else {
-          bearEnergy += body / range;
-          bearEnergy += 1 - closePosition;
-          bearEnergy -= lowerReject;
+          bearEnergy += body / range + (1 - closePosition);
         }
       }
 

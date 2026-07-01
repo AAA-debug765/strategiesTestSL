@@ -1,155 +1,69 @@
-import type {
-    Strategy,
-    CandleData,
-    BacktestResult,
-    BacktestOptions
-} from "./types";
-
+import type { Strategy, CandleData, BacktestResult, BacktestOptions } from "./types";
 import { runBacktestEngine } from "../lib/backtest";
 
 const memoryHoleStrategy: Strategy = {
-    id: "memory-hole-v1",
+  id: "memory-hole-v1",
+  name: "Price Memory Hole",
+  description: "Detects candles that break the local linear pattern (high model error), enters on strong confirmation.",
 
-    name: "Price Memory Hole",
-    description:
-        "Detects candles that are structurally irreplaceable in local window geometry.",
+  parameters: [
+    { name: "window", label: "Window", default: 15, min: 5, max: 50, step: 1 },
+    { name: "errorThreshold", label: "Error Threshold", default: 0.002, min: 0.0005, max: 0.01, step: 0.0005 },
+    { name: "bodyFactor", label: "Body Factor", default: 1.5, min: 1.0, max: 4.0, step: 0.1 },
+    { name: "cooldown", label: "Cooldown", default: 10, min: 0, max: 50, step: 1 },
+  ],
 
-    parameters: [
-        {
-            name: "window",
-            label: "Window",
-            default: 20,
-            min: 10,
-            max: 80,
-            step: 1
-        },
-        {
-            name: "importanceThreshold",
-            label: "Importance",
-            default: 1.5,
-            min: 0.5,
-            max: 5,
-            step: 0.1
-        },
-        {
-            name: "dominanceRatio",
-            label: "Dominance",
-            default: 2.0,
-            min: 1.0,
-            max: 5,
-            step: 0.1
-        },
-        {
-            name: "cooldown",
-            label: "Cooldown",
-            default: 15,
-            min: 0,
-            max: 100,
-            step: 1
-        }
-    ],
+  run(candles: CandleData[], params: Record<string, number>, options?: BacktestOptions): BacktestResult {
+    const { window, errorThreshold, bodyFactor, cooldown: cooldownBars } = params;
 
-    run(
-        candles: CandleData[],
-        params: Record<string, number>,
-        options?: BacktestOptions
-    ): BacktestResult {
+    const signals: number[] = new Array(candles.length).fill(0);
+    let cd = 0;
 
-        const window = params.window;
-        const importanceThreshold = params.importanceThreshold;
-        const dominanceRatio = params.dominanceRatio;
-        const cooldownBars = params.cooldown;
+    // Pre-compute model errors for each position in the window
+    for (let i = window + 1; i < candles.length; i++) {
+      if (cd > 0) { cd--; continue; }
 
-        const signals = new Array(candles.length).fill(0);
+      // Linear regression error over window [i-window, i)
+      let sumX = 0, sumY = 0, sumXX = 0, sumXY = 0;
+      const n = window;
+      for (let j = 0; j < n; j++) {
+        const x = j;
+        const y = candles[i - window + j].close;
+        sumX += x; sumY += y; sumXX += x * x; sumXY += x * y;
+      }
+      const denom = n * sumXX - sumX * sumX;
+      if (denom === 0) continue;
+      const b = (n * sumXY - sumX * sumY) / denom;
+      const a = (sumY - b * sumX) / n;
 
-        let cooldown = 0;
+      // Check if previous candle (i-1) breaks the pattern significantly
+      const prevIdx = i - 1;
+      const predPrev = a + b * (window - 1);
+      const actualPrev = candles[prevIdx].close;
+      const prevError = Math.abs(actualPrev - predPrev);
 
-        function modelError(start: number, end: number): number {
-            let sumX = 0;
-            let sumY = 0;
-            let sumXX = 0;
-            let sumXY = 0;
-            let n = 0;
+      // Normalized error (relative to price level)
+      const normError = actualPrev > 0 ? prevError / actualPrev : 0;
 
-            for (let i = start; i < end; i++) {
-                const x = i - start;
-                const y = candles[i].close - candles[i].open;
-                sumX += x;
-                sumY += y;
-                sumXX += x * x;
-                sumXY += x * y;
-                n++;
-            }
+      // If previous candle breaks pattern significantly, check current for confirmation
+      if (normError < errorThreshold) continue;
 
-            const denom = n * sumXX - sumX * sumX;
-            if (denom === 0) return 0;
+      const current = candles[i];
+      const currentBody = Math.abs(current.close - current.open);
+      const avgBody = Math.abs(candles[prevIdx].close - candles[prevIdx].open);
 
-            const b = (n * sumXY - sumX * sumY) / denom;
-            const a = (sumY - b * sumX) / n;
+      if (currentBody < avgBody * bodyFactor) continue;
 
-            let error = 0;
-            for (let i = start; i < end; i++) {
-                const x = i - start;
-                const y = candles[i].close - candles[i].open;
-                const pred = a + b * x;
-                error += Math.abs(y - pred);
-            }
-
-            return error;
-        }
-
-        for (let i = window + 5; i < candles.length; i++) {
-
-            if (cooldown > 0) {
-                cooldown--;
-                continue;
-            }
-
-            const start = i - window;
-            const end = i;
-
-            const baseError = modelError(start, end);
-
-            let maxImpact = -Infinity;
-            let maxIndex = -1;
-
-            for (let j = start; j < end; j++) {
-                const errorWithout =
-                    modelError(start, j) +
-                    modelError(j + 1, end);
-
-                const impact = errorWithout - baseError;
-
-                if (impact > maxImpact) {
-                    maxImpact = impact;
-                    maxIndex = j;
-                }
-            }
-
-            const current = candles[i];
-            const body = Math.abs(current.close - current.open);
-            const prevBody =
-                Math.abs(candles[i - 1].close - candles[i - 1].open);
-
-            const isDominant =
-                body > prevBody * dominanceRatio;
-
-            const isImportant =
-                maxImpact > importanceThreshold &&
-                maxIndex === i - 1;
-
-            if (isImportant && isDominant) {
-                if (current.close > current.open) {
-                    signals[i] = 1;
-                } else {
-                    signals[i] = -1;
-                }
-                cooldown = cooldownBars;
-            }
-        }
-
-        return runBacktestEngine(candles, signals, params, options);
+      if (current.close > current.open) {
+        signals[i] = 1;
+      } else {
+        signals[i] = -1;
+      }
+      cd = Math.round(cooldownBars);
     }
+
+    return runBacktestEngine(candles, signals, params, options);
+  },
 };
 
 export default memoryHoleStrategy;
