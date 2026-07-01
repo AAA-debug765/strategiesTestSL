@@ -1,8 +1,16 @@
 import { NextRequest } from "next/server";
 import { getStrategy } from "@/strategies";
-import type { OptimizeResult } from "@/strategies/types";
+import type { OptimizeResult, BacktestOptions } from "@/strategies/types";
 
 export const dynamic = "force-dynamic";
+
+// ── Optimization goal: MINIMIZE maxConsecutiveSl (ascending sort) ──
+// Every strategy returns BacktestMetrics.maxConsecutiveSl via runBacktestEngine.
+// Future strategies must also return BacktestResult with this metric.
+
+function sortByGoal(a: OptimizeResult, b: OptimizeResult): number {
+  return a.metrics.maxConsecutiveSl - b.metrics.maxConsecutiveSl;
+}
 
 // ── Helper: generate cartesian product of param values ──
 function generateCombos(paramVals: { name: string; values: number[] }[]): Record<string, number>[] {
@@ -73,7 +81,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const { strategyId, candles, rangeOverrides, sortBy = "maxConsecutiveSl", options, funnel = false } = body;
+  const { strategyId, candles, rangeOverrides, options, funnel = false } = body;
 
   if (!strategyId) {
     return new Response(JSON.stringify({ error: "strategyId is required" }), {
@@ -119,7 +127,7 @@ export async function POST(request: NextRequest) {
   // Calculate total cartesian product size (for logging & stride calc)
   let totalPossible = 1;
   for (const pv of paramValues) totalPossible *= pv.values.length;
-  console.log(`[optimize] strategy=${strategyId} candles=${candles.length} totalPossible=${totalPossible} sortBy=${sortBy} funnel=${funnel}`);
+  console.log(`[optimize] strategy=${strategyId} candles=${candles.length} totalPossible=${totalPossible} goal=minimize maxConsecutiveSl funnel=${funnel}`);
 
   // Create job and return jobId immediately
   const jobId = `opt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -137,14 +145,13 @@ export async function POST(request: NextRequest) {
   if (funnel) {
     // ═══════════════════════════════════════════════
     // ═══ FUNNEL MODE: 2-pass optimization ═══
+    // ═══ Goal: minimize maxConsecutiveSl ═══
     // ═══════════════════════════════════════════════
-    // Pass 1: coarse scan — every stride-th value per param
-    // Pass 2: fine scan  — original step around top-N from pass 1
 
     (async () => {
-      const COARSE_TARGET = 5000; // target combos for pass 1
-      const TOP_N = 10;           // top results to refine in pass 2
-      const FINE_RADIUS = 2;      // steps in each direction for fine scan
+      const COARSE_TARGET = 5000;
+      const TOP_N = 10;
+      const FINE_RADIUS = 2;
       const YIELD_EVERY = 10;
       const yieldTick = () => new Promise<void>((r) => setTimeout(r, 0));
 
@@ -192,20 +199,13 @@ export async function POST(request: NextRequest) {
 
       // If cancelled during pass 1, save partial and stop
       if (job.status !== "running") {
-        pass1Results.sort((a, b) => ((a.metrics as Record<string, number>)[sortBy] ?? 0) - ((b.metrics as Record<string, number>)[sortBy] ?? 0));
+        pass1Results.sort(sortByGoal);
         job.results = pass1Results.slice(0, 100);
         return;
       }
 
-      // Sort pass 1, pick top-N
-      // Сортировка: maxConsecutiveSl — по возрастанию (меньше = лучше)
-      const sortAsc = sortBy === "maxConsecutiveSl";
-      const sortFn = (a: OptimizeResult, b: OptimizeResult) => {
-        const av = (a.metrics as Record<string, number>)[sortBy] ?? 0;
-        const bv = (b.metrics as Record<string, number>)[sortBy] ?? 0;
-        return sortAsc ? av - bv : bv - av;
-      };
-      pass1Results.sort(sortFn);
+      // Sort pass 1 by goal, pick top-N
+      pass1Results.sort(sortByGoal);
       const topResults = pass1Results.slice(0, TOP_N);
 
       // ── Generate fine combos around top-N ──
@@ -253,8 +253,8 @@ export async function POST(request: NextRequest) {
         if (i % YIELD_EVERY === 0) await yieldTick();
       }
 
-      // Final sort and save (ascending: меньше maxConsecutiveSl = лучше)
-      allResults.sort((a, b) => ((a.metrics as Record<string, number>)[sortBy] ?? 0) - ((b.metrics as Record<string, number>)[sortBy] ?? 0));
+      // Final sort by goal (minimize maxConsecutiveSl) and save
+      allResults.sort(sortByGoal);
       job.results = allResults.slice(0, 100);
       job.status = "done";
 
@@ -262,10 +262,10 @@ export async function POST(request: NextRequest) {
     })();
   } else {
     // ═══════════════════════════════════════════════
-    // ═══ BRUTE FORCE: full grid search (original) ═══
+    // ═══ BRUTE FORCE: full grid search ═══
+    // ═══ Goal: minimize maxConsecutiveSl ═══
     // ═══════════════════════════════════════════════
 
-    // Generate full cartesian product (only for brute-force)
     const combos = generateCombos(paramValues);
     const total = combos.length;
     job.total = total;
@@ -274,7 +274,6 @@ export async function POST(request: NextRequest) {
       const results: OptimizeResult[] = [];
       let errors = 0;
 
-      // Yield to event loop every N iterations so polling can be served
       const YIELD_EVERY = 10;
       const yieldTick = () => new Promise<void>((r) => setTimeout(r, 0));
 
@@ -289,23 +288,15 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Update progress in global store (polling reads from here)
         job.current = i + 1;
 
-        // Periodically sort and save partial results (ascending)
+        // Periodically sort and save partial results
         if (i % 50 === 0 && i > 0) {
-          results.sort((a, b) => {
-            const av = (a.metrics as Record<string, number>)[sortBy] ?? 0;
-            const bv = (b.metrics as Record<string, number>)[sortBy] ?? 0;
-            return av - bv;
-          });
+          results.sort(sortByGoal);
           job.results = results.slice(0, 100);
         }
 
-        // Check if job was cancelled
         if (job.status !== "running") break;
-
-        // Yield to event loop so polling GET requests can be served
         if (i % YIELD_EVERY === 0) await yieldTick();
       }
 
@@ -313,13 +304,9 @@ export async function POST(request: NextRequest) {
         console.error(`[optimize] Total errors: ${errors}/${total}`);
       }
 
-      // Keep partial results always sorted (ascending: меньше SL подряд = лучше)
-      results.sort((a, b) => {
-        const av = (a.metrics as Record<string, number>)[sortBy] ?? 0;
-        const bv = (b.metrics as Record<string, number>)[sortBy] ?? 0;
-        return av - bv;
-      });
-      job.results = results.slice(0, 100); // keep top 100 sorted
+      // Final sort by goal and save top 100
+      results.sort(sortByGoal);
+      job.results = results.slice(0, 100);
 
       job.status = "done";
       job.current = total;
