@@ -30,7 +30,7 @@ import {
   Loader2,
   Target,
   Trophy,
-  Activity,
+  
   ArrowUpCircle,
   ArrowDownCircle,
   AlertCircle,
@@ -487,32 +487,17 @@ export function StrategyConfig() {
       {/* ── Metrics ─────────────────────────────────── */}
       {backtestResult && (
         <>
-          {(() => {
-            const slTrades = backtestResult.trades.filter((t) => t.exitReason === "sl").length;
-            const tpTrades = backtestResult.trades.filter((t) => t.exitReason === "tp").length;
-            const metrics = [
-              { label: "Max SL подряд", value: String(backtestResult.metrics.maxConsecutiveSl), color: backtestResult.metrics.maxConsecutiveSl <= 2 ? "text-green-500" : backtestResult.metrics.maxConsecutiveSl <= 5 ? "text-yellow-500" : "text-red-500", icon: ShieldAlert },
-              { label: "Trades", value: String(backtestResult.metrics.totalTrades), color: "text-muted-foreground", icon: Activity, extra: `${tpTrades} TP / ${slTrades} SL` },
-            ];
-            return (
-              <div className="grid grid-cols-2 gap-1.5">
-                {metrics.map((m) => (
-                  <Card key={m.label} className="border-border/50">
-                    <CardContent className="px-2 py-1">
-                      <div className="flex items-center gap-1">
-                        <m.icon className={`h-2.5 w-2.5 ${m.color}`} />
-                        <span className="text-[9px] text-muted-foreground">{m.label}</span>
-                      </div>
-                      <p className={`text-xs font-semibold leading-tight ${m.color}`}>{m.value}</p>
-                      {"extra" in m && (
-                        <p className="text-[9px] text-muted-foreground leading-tight">{m.extra}</p>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
+          <Card className="border-border/50">
+            <CardContent className="px-2 py-1.5">
+              <div className="flex items-center gap-1">
+                <ShieldAlert className={`h-3 w-3 ${backtestResult.metrics.maxConsecutiveSl <= 2 ? "text-green-500" : backtestResult.metrics.maxConsecutiveSl <= 5 ? "text-yellow-500" : "text-red-500"}`} />
+                <span className="text-[9px] text-muted-foreground">Max SL подряд</span>
               </div>
-            );
-          })()}
+              <p className={`text-sm font-bold ${backtestResult.metrics.maxConsecutiveSl <= 2 ? "text-green-500" : backtestResult.metrics.maxConsecutiveSl <= 5 ? "text-yellow-500" : "text-red-500"}`}>
+                {backtestResult.metrics.maxConsecutiveSl}
+              </p>
+            </CardContent>
+          </Card>
 
           {/* Equity Curve */}
           <Card>
@@ -544,8 +529,7 @@ export function StrategyConfig() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-[10px] h-6 py-0">#</TableHead>
-                    <TableHead className="text-[10px] h-6 py-0">Max SL</TableHead>
-                    <TableHead className="text-[10px] h-6 py-0">Trades</TableHead>
+                    <TableHead className="text-[10px] h-6 py-0">SL подряд</TableHead>
                     {selectedStrategy?.parameters.map((p) => (
                       <TableHead key={p.name} className="text-[10px] h-6 py-0">{p.label}</TableHead>
                     ))}
@@ -561,10 +545,9 @@ export function StrategyConfig() {
                       title="Double-click to save & apply"
                     >
                       <TableCell className="text-[10px] py-0.5 font-medium">{i + 1}</TableCell>
-                      <TableCell className={`text-[10px] py-0.5 font-mono font-medium ${r.metrics.maxConsecutiveSl <= 2 ? "text-green-500" : r.metrics.maxConsecutiveSl <= 5 ? "text-yellow-500" : "text-red-500"}`}>
+                      <TableCell className={`text-[10px] py-0.5 font-mono font-bold ${r.metrics.maxConsecutiveSl <= 2 ? "text-green-500" : r.metrics.maxConsecutiveSl <= 5 ? "text-yellow-500" : "text-red-500"}`}>
                         {r.metrics.maxConsecutiveSl}
                       </TableCell>
-                      <TableCell className="text-[10px] py-0.5 font-mono">{r.metrics.totalTrades}</TableCell>
                       {selectedStrategy?.parameters.map((p) => (
                         <TableCell key={p.name} className="text-[10px] py-0.5 font-mono">{r.params[p.name]}</TableCell>
                       ))}
