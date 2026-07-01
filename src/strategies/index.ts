@@ -1,7 +1,8 @@
 import type { Strategy, StrategyParam } from "./types";
 import residualCoherence from "./residual-coherence";
+import grammarStrategy from "./grammar-language";
 
-export const strategies: Strategy[] = [residualCoherence];
+export const strategies: Strategy[] = [residualCoherence, grammarStrategy];
 export function getStrategy(id: string): Strategy | undefined {
   return strategies.find((s) => s.id === id);
 }
