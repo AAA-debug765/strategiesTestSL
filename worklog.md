@@ -47,3 +47,22 @@
 - All-in позиционирование полным капиталом
 - TP/SL внутри бара: SL проверяется первым (безопасность)
 - USDT TP/SL: прямой расчёт цены `entryPrice ± tpUsdt / positionSize`
+
+---
+Task ID: 1
+Agent: main
+Task: Исправить неработающий оптимизатор (404 на /api/optimize/status)
+
+Work Log:
+- Диагностика: в dev.log обнаружены сплошные 404 на GET /api/optimize/status?jobId=...
+- Корневая причина: в Next.js 16 + Turbopack модуль `optimize/route.ts` компилируется как отдельный инстанс для каждого API-роута. `jobs` Map, будучи переменной уровня модуля, не разделялся между POST /api/optimize и GET /api/optimize/status
+- Исправление: вынес `jobs` Map в `globalThis` через функцию `getJobsMap()` с ключом `__backtester_opt_jobs__`
+- Обновлены все обращения к `jobs` в POST и DELETE обработчиках
+- Добавлен `-H 0.0.0.0` в dev-скрипт package.json
+- Добавлен `allowedDevOrigins` в next.config.ts
+
+Stage Summary:
+- Оптимизатор снова работает: curl-тест с funnel mode — 5940 комбинаций за секунды, 100 результатов
+- Браузер-тест: полная цепочка POST→polling→done→результаты в таблице работает
+- Проверено через agent-browser: таблица показывает #, Max SL, Trades, параметры стратегии
+- Запушено 2 коммита: fix optimizer 404 + config improvements
