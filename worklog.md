@@ -37,6 +37,13 @@
 - `false-capture.ts` (6 параметров)
 — нужно пересоздать по описанию пользователя
 
+## Рабочий метод запуска сервера
+```bash
+cd /home/z/my-project && > dev.log && setsid bash -c 'exec node node_modules/.bin/next dev -p 3000 -H 0.0.0.0' > dev.log 2>&1 & disown
+```
+Важно: `-H 0.0.0.0` обязателен (без него сервер не отвечает на 127.0.0.1).
+Сервер живет только внутри одной bash-команды — между вызовами инструментов sandbox убивает процессы.
+
 ## GitHub
 - Remote: https://github.com/AAA-debug765/strategiesTestSL.git
 - Branch: main
