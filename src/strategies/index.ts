@@ -1,16 +1,7 @@
 import type { Strategy, StrategyParam } from "./types";
-import maCrossStrategy from "./ma-cross";
-import rsiStrategy from "./rsi";
-import bollingerStrategy from "./bollinger";
-import compressionStateMachine from "./compression-state-machine";
-import geometryRelease from "./geometry-release";
-import memoryHole from "./memory-hole";
-import candleEnergyStrategy from "./candle-energy";
-import alternateStrategy from "./alternate";
-import stochRciStrategy from "./stoch-rci";
 import residualCoherence from "./residual-coherence";
 
-export const strategies: Strategy[] = [maCrossStrategy, rsiStrategy, bollingerStrategy, compressionStateMachine, geometryRelease, memoryHole, candleEnergyStrategy, alternateStrategy, stochRciStrategy, residualCoherence];
+export const strategies: Strategy[] = [residualCoherence];
 export function getStrategy(id: string): Strategy | undefined {
   return strategies.find((s) => s.id === id);
 }
