@@ -530,6 +530,7 @@ export function StrategyConfig() {
                   <TableRow>
                     <TableHead className="text-[10px] h-6 py-0">#</TableHead>
                     <TableHead className="text-[10px] h-6 py-0">SL подряд</TableHead>
+                    <TableHead className="text-[10px] h-6 py-0">Trades</TableHead>
                     {selectedStrategy?.parameters.map((p) => (
                       <TableHead key={p.name} className="text-[10px] h-6 py-0">{p.label}</TableHead>
                     ))}
@@ -548,6 +549,7 @@ export function StrategyConfig() {
                       <TableCell className={`text-[10px] py-0.5 font-mono font-bold ${r.metrics.maxConsecutiveSl <= 2 ? "text-green-500" : r.metrics.maxConsecutiveSl <= 5 ? "text-yellow-500" : "text-red-500"}`}>
                         {r.metrics.maxConsecutiveSl}
                       </TableCell>
+                      <TableCell className="text-[10px] py-0.5 font-mono">{r.metrics.totalTrades}</TableCell>
                       {selectedStrategy?.parameters.map((p) => (
                         <TableCell key={p.name} className="text-[10px] py-0.5 font-mono">{r.params[p.name]}</TableCell>
                       ))}
