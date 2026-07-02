@@ -1,4 +1,4 @@
-import type { Strategy, CandleData, BacktestResult, BacktestOptions } from "./types";
+import type { Strategy, CandleData, BacktestResult, BacktestOptions, BacktestMetrics } from "./types";
 import { runBacktestEngine } from "../lib/backtest";
 
 const residualCoherence: Strategy = {
@@ -11,6 +11,21 @@ const residualCoherence: Strategy = {
     { name: "coherenceThreshold", label: "Coherence Thr", default: 0.72, min: 0.3, max: 2, step: 0.01 },
     { name: "directionThreshold", label: "Direction Thr", default: 0.18, min: 0.05, max: 1, step: 0.01 },
     { name: "cooldown", label: "Cooldown", default: 15, min: 0, max: 100, step: 1 },
+  ],
+
+  optimizeGoal: (m: BacktestMetrics) => {
+    if (m.totalTrades === 0) return Infinity;
+    // Minimize SL streaks relative to trade count, penalize low trade count
+    return (m.maxConsecutiveSl / m.totalTrades) + (1 / m.totalTrades);
+  },
+
+  optimizeColumns: [
+    { key: "score", label: "Score" },
+    { key: "totalTrades", label: "Trades" },
+    { key: "winRate", label: "Win %", format: (v: number) => v.toFixed(1) },
+    { key: "maxConsecutiveSl", label: "Max SL" },
+    { key: "netPnl", label: "Net PnL", format: (v: number) => v.toFixed(0) },
+    { key: "maxDrawdownPct", label: "DD %", format: (v: number) => v.toFixed(1) },
   ],
 
   run(candles: CandleData[], params: Record<string, number>, options?: BacktestOptions): BacktestResult {

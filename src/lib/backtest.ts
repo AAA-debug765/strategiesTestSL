@@ -107,20 +107,78 @@ export function runBacktestEngine(
     if (equityCurve.length > 0) equityCurve[equityCurve.length - 1].value = equity;
   }
 
-  return { trades, equityCurve, metrics: calculateMetrics(trades), params };
+  return { trades, equityCurve, metrics: calculateMetrics(trades, equityCurve, initialCapital), params };
 }
 
-function calculateMetrics(trades: Trade[]): BacktestMetrics {
-  // Максимальное количество SL подряд
-  let maxConsecutiveSl = 0;
-  let currentStreak = 0;
+function calculateMetrics(trades: Trade[], equityCurve: { time: number; value: number }[], initialCapital: number): BacktestMetrics {
+  const totalTrades = trades.length;
+
+  if (totalTrades === 0) {
+    return {
+      totalTrades: 0, wins: 0, losses: 0, winRate: 0,
+      maxConsecutiveSl: 0, maxConsecutiveWins: 0,
+      grossProfit: 0, grossLoss: 0, netPnl: 0,
+      profitFactor: 0, avgPnl: 0, avgWin: 0, avgLoss: 0,
+      maxDrawdownPct: 0, maxDrawdownUsd: 0, sharpeRatio: 0,
+      score: 0,
+    };
+  }
+
+  let wins = 0, losses = 0;
+  let grossProfit = 0, grossLoss = 0;
+  let maxConsecutiveSl = 0, maxConsecutiveWins = 0;
+  let slStreak = 0, winStreak = 0;
+
   for (const t of trades) {
-    if (t.exitReason === "sl") {
-      currentStreak++;
-      if (currentStreak > maxConsecutiveSl) maxConsecutiveSl = currentStreak;
+    if (t.pnl >= 0) {
+      wins++;
+      grossProfit += t.pnl;
+      winStreak++;
+      slStreak = 0;
+      if (winStreak > maxConsecutiveWins) maxConsecutiveWins = winStreak;
     } else {
-      currentStreak = 0;
+      losses++;
+      grossLoss += Math.abs(t.pnl);
+      slStreak++;
+      winStreak = 0;
+      if (slStreak > maxConsecutiveSl) maxConsecutiveSl = slStreak;
     }
   }
-  return { totalTrades: trades.length, maxConsecutiveSl };
+
+  const winRate = (wins / totalTrades) * 100;
+  const netPnl = grossProfit - grossLoss;
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
+  const avgPnl = netPnl / totalTrades;
+  const avgWin = wins > 0 ? grossProfit / wins : 0;
+  const avgLoss = losses > 0 ? grossLoss / losses : 0;
+
+  // Max drawdown from equity curve
+  let peak = equityCurve[0]?.value ?? initialCapital;
+  let maxDrawdownUsd = 0;
+  let maxDrawdownPct = 0;
+
+  for (const pt of equityCurve) {
+    if (pt.value > peak) peak = pt.value;
+    const dd = peak - pt.value;
+    if (dd > maxDrawdownUsd) {
+      maxDrawdownUsd = dd;
+      maxDrawdownPct = peak > 0 ? (dd / peak) * 100 : 0;
+    }
+  }
+
+  // Sharpe ratio (simplified, per-trade based on returns)
+  const returns = trades.map((t) => t.pnlPct);
+  const avgReturn = returns.reduce((a, b) => a + b, 0) / returns.length;
+  const variance = returns.reduce((a, r) => a + (r - avgReturn) ** 2, 0) / returns.length;
+  const stdDev = Math.sqrt(variance);
+  const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252) : 0;
+
+  return {
+    totalTrades, wins, losses, winRate,
+    maxConsecutiveSl, maxConsecutiveWins,
+    grossProfit, grossLoss, netPnl,
+    profitFactor, avgPnl, avgWin, avgLoss,
+    maxDrawdownPct, maxDrawdownUsd, sharpeRatio,
+    score: 0, // will be set by optimizer using strategy's optimizeGoal
+  };
 }

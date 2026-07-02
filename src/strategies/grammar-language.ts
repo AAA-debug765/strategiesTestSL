@@ -1,4 +1,4 @@
-import type { Strategy, CandleData, BacktestResult, BacktestOptions } from "./types";
+import type { Strategy, CandleData, BacktestResult, BacktestOptions, BacktestMetrics } from "./types";
 import { runBacktestEngine } from "../lib/backtest";
 
 const grammarStrategy: Strategy = {
@@ -13,6 +13,21 @@ const grammarStrategy: Strategy = {
     { name: "confidence", label: "Confidence", default: 0.7, min: 0.5, max: 0.95, step: 0.01 },
     { name: "bodyThreshold", label: "Body Thr", default: 0.55, min: 0.2, max: 0.9, step: 0.05 },
     { name: "cooldown", label: "Cooldown", default: 20, min: 0, max: 100, step: 1 },
+  ],
+
+  optimizeGoal: (m: BacktestMetrics) => {
+    if (m.totalTrades === 0) return Infinity;
+    // Minimize SL streaks relative to trade count, penalize low trade count
+    return (m.maxConsecutiveSl / m.totalTrades) + (1 / m.totalTrades);
+  },
+
+  optimizeColumns: [
+    { key: "score", label: "Score" },
+    { key: "totalTrades", label: "Trades" },
+    { key: "winRate", label: "Win %", format: (v: number) => v.toFixed(1) },
+    { key: "maxConsecutiveSl", label: "Max SL" },
+    { key: "netPnl", label: "Net PnL", format: (v: number) => v.toFixed(0) },
+    { key: "maxDrawdownPct", label: "DD %", format: (v: number) => v.toFixed(1) },
   ],
 
   run(candles: CandleData[], params: Record<string, number>, options?: BacktestOptions): BacktestResult {

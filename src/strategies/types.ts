@@ -30,7 +30,22 @@ export interface Trade {
 
 export interface BacktestMetrics {
   totalTrades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
   maxConsecutiveSl: number;
+  maxConsecutiveWins: number;
+  grossProfit: number;
+  grossLoss: number;
+  netPnl: number;
+  profitFactor: number;
+  avgPnl: number;
+  avgWin: number;
+  avgLoss: number;
+  maxDrawdownPct: number;
+  maxDrawdownUsd: number;
+  sharpeRatio: number;
+  score: number; // optimization score (set by strategy's optimizeGoal, lower = better)
 }
 
 export interface BacktestResult {
@@ -40,11 +55,25 @@ export interface BacktestResult {
   params: Record<string, number>;
 }
 
+export interface OptimizeColumn {
+  key: string;
+  label: string;
+  format?: (v: number) => string;
+}
+
 export interface Strategy {
   id: string;
   name: string;
   description: string;
   parameters: StrategyParam[];
+  /** Columns to display in optimization results table. Defaults to common set. */
+  optimizeColumns?: OptimizeColumn[];
+  /**
+   * Custom optimization scoring function.
+   * Receives BacktestMetrics, returns a number (lower = better).
+   * If not set, uses default: maxConsecutiveSl / totalTrades.
+   */
+  optimizeGoal?: (metrics: BacktestMetrics) => number;
   run: (candles: CandleData[], params: Record<string, number>, options?: BacktestOptions) => BacktestResult;
 }
 
@@ -66,3 +95,14 @@ export interface OptimizeResult {
   params: Record<string, number>;
   metrics: BacktestMetrics;
 }
+
+/** Default columns shown when strategy doesn't define optimizeColumns */
+export const DEFAULT_OPTIMIZE_COLUMNS: OptimizeColumn[] = [
+  { key: "score", label: "Score" },
+  { key: "totalTrades", label: "Trades" },
+  { key: "winRate", label: "Win %" },
+  { key: "profitFactor", label: "PF" },
+  { key: "maxConsecutiveSl", label: "Max SL" },
+  { key: "netPnl", label: "Net PnL" },
+  { key: "maxDrawdownPct", label: "DD %" },
+];

@@ -40,6 +40,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { useStrategy, type FeeSettings } from "./strategy-context";
+import { DEFAULT_OPTIMIZE_COLUMNS, type OptimizeColumn } from "@/strategies/types";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 // ── Helpers ────────────────────────────────────────────
@@ -152,6 +153,25 @@ function StepSelect({ value, onChange }: { value: number; onChange: (v: number) 
       </SelectContent>
     </Select>
   );
+}
+
+function MetricRow({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-[9px] text-muted-foreground">{label}</span>
+      <span className={`text-[10px] font-medium font-mono ${color ?? "text-foreground"}`}>{value}</span>
+    </div>
+  );
+}
+
+function getMetricColor(key: string, value: number): string {
+  if (key === "score") return value < 0.1 ? "text-green-500" : value < 0.3 ? "text-yellow-500" : "text-red-500";
+  if (key === "winRate") return value >= 50 ? "text-green-500" : "text-red-400";
+  if (key === "maxConsecutiveSl") return value <= 2 ? "text-green-500" : value <= 5 ? "text-yellow-500" : "text-red-500";
+  if (key === "netPnl") return value >= 0 ? "text-green-500" : "text-red-500";
+  if (key === "maxDrawdownPct") return value > 20 ? "text-red-500" : value > 10 ? "text-yellow-500" : "text-green-500";
+  if (key === "profitFactor") return value >= 1.5 ? "text-green-500" : value >= 1 ? "text-yellow-500" : "text-red-500";
+  return "";
 }
 
 // ── Progress Card ──────────────────────────────────────
@@ -333,6 +353,11 @@ export function StrategyConfig() {
     funnelMode, setFunnelMode,
   } = useStrategy();
 
+  const optimizeColumns: OptimizeColumn[] = useMemo(
+    () => selectedStrategy?.optimizeColumns ?? DEFAULT_OPTIMIZE_COLUMNS,
+    [selectedStrategy]
+  );
+
   // Block page scroll when focused on a number input inside this panel
   useEffect(() => {
     const panel = panelRef.current;
@@ -478,22 +503,22 @@ export function StrategyConfig() {
       <FeeConfigCard />
 
       {/* ── Metrics ─────────────────────────────────── */}
-      {backtestResult && (
-        <>
-          <Card className="border-border/50">
-            <CardContent className="px-2 py-1.5">
-              <div className="flex items-center gap-1">
-                <ShieldAlert className={`h-3 w-3 ${backtestResult.metrics.maxConsecutiveSl <= 2 ? "text-green-500" : backtestResult.metrics.maxConsecutiveSl <= 5 ? "text-yellow-500" : "text-red-500"}`} />
-                <span className="text-[9px] text-muted-foreground">Max SL подряд</span>
-              </div>
-              <p className={`text-sm font-bold ${backtestResult.metrics.maxConsecutiveSl <= 2 ? "text-green-500" : backtestResult.metrics.maxConsecutiveSl <= 5 ? "text-yellow-500" : "text-red-500"}`}>
-                {backtestResult.metrics.maxConsecutiveSl}
-              </p>
-            </CardContent>
-          </Card>
-
-          
-        </>
+      {backtestResult && backtestResult.metrics.totalTrades > 0 && (
+        <Card className="border-border/50">
+          <CardContent className="px-2 py-2 space-y-1.5">
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+              <MetricRow label="Trades" value={String(backtestResult.metrics.totalTrades)} />
+              <MetricRow label="Win Rate" value={`${backtestResult.metrics.winRate.toFixed(1)}%`} color={backtestResult.metrics.winRate >= 50 ? "text-green-500" : "text-red-400"} />
+              <MetricRow label="Net PnL" value={fmtUsdt(backtestResult.metrics.netPnl)} color={backtestResult.metrics.netPnl >= 0 ? "text-green-500" : "text-red-500"} />
+              <MetricRow label="Profit Factor" value={backtestResult.metrics.profitFactor === Infinity ? "∞" : backtestResult.metrics.profitFactor.toFixed(2)} color={backtestResult.metrics.profitFactor >= 1.5 ? "text-green-500" : "text-yellow-500"} />
+              <MetricRow label="Max SL" value={String(backtestResult.metrics.maxConsecutiveSl)} color={backtestResult.metrics.maxConsecutiveSl <= 2 ? "text-green-500" : backtestResult.metrics.maxConsecutiveSl <= 5 ? "text-yellow-500" : "text-red-500"} />
+              <MetricRow label="Max Wins" value={String(backtestResult.metrics.maxConsecutiveWins)} color="text-green-500" />
+              <MetricRow label="Max DD" value={`${backtestResult.metrics.maxDrawdownPct.toFixed(1)}%`} color={backtestResult.metrics.maxDrawdownPct > 20 ? "text-red-500" : backtestResult.metrics.maxDrawdownPct > 10 ? "text-yellow-500" : "text-green-500"} />
+              <MetricRow label="Avg PnL" value={fmtUsdt(backtestResult.metrics.avgPnl)} color={backtestResult.metrics.avgPnl >= 0 ? "text-green-500" : "text-red-500"} />
+              <MetricRow label="Sharpe" value={backtestResult.metrics.sharpeRatio.toFixed(2)} color={backtestResult.metrics.sharpeRatio >= 1 ? "text-green-500" : backtestResult.metrics.sharpeRatio >= 0 ? "text-yellow-500" : "text-red-500"} />
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* ── Optimization Results ─────────────────────── */}
@@ -512,8 +537,9 @@ export function StrategyConfig() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-[10px] h-6 py-0">#</TableHead>
-                    <TableHead className="text-[10px] h-6 py-0">SL подряд</TableHead>
-                    <TableHead className="text-[10px] h-6 py-0">Trades</TableHead>
+                    {optimizeColumns.map((col) => (
+                      <TableHead key={col.key} className="text-[10px] h-6 py-0">{col.label}</TableHead>
+                    ))}
                     {selectedStrategy?.parameters.map((p) => (
                       <TableHead key={p.name} className="text-[10px] h-6 py-0">{p.label}</TableHead>
                     ))}
@@ -529,10 +555,11 @@ export function StrategyConfig() {
                       title="Double-click to save & apply"
                     >
                       <TableCell className="text-[10px] py-0.5 font-medium">{i + 1}</TableCell>
-                      <TableCell className={`text-[10px] py-0.5 font-mono font-bold ${r.metrics.maxConsecutiveSl <= 2 ? "text-green-500" : r.metrics.maxConsecutiveSl <= 5 ? "text-yellow-500" : "text-red-500"}`}>
-                        {r.metrics.maxConsecutiveSl}
-                      </TableCell>
-                      <TableCell className="text-[10px] py-0.5 font-mono">{r.metrics.totalTrades}</TableCell>
+                      {optimizeColumns.map((col) => (
+                        <TableCell key={col.key} className={`text-[10px] py-0.5 font-mono ${getMetricColor(col.key, r.metrics[col.key as keyof typeof r.metrics])}`}>
+                          {col.format ? col.format(r.metrics[col.key as keyof typeof r.metrics] as number) : r.metrics[col.key as keyof typeof r.metrics]}
+                        </TableCell>
+                      ))}
                       {selectedStrategy?.parameters.map((p) => (
                         <TableCell key={p.name} className="text-[10px] py-0.5 font-mono">{r.params[p.name]}</TableCell>
                       ))}
