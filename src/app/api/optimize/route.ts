@@ -9,6 +9,10 @@ export const dynamic = "force-dynamic";
 // Future strategies must also return BacktestResult with this metric.
 
 function sortByGoal(a: OptimizeResult, b: OptimizeResult): number {
+  // Always prefer results with trades over 0-trade results
+  const aTrades = a.metrics.totalTrades > 0 ? 0 : 1;
+  const bTrades = b.metrics.totalTrades > 0 ? 0 : 1;
+  if (aTrades !== bTrades) return aTrades - bTrades;
   return a.metrics.maxConsecutiveSl - b.metrics.maxConsecutiveSl;
 }
 
