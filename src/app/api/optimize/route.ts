@@ -5,8 +5,6 @@ import type { OptimizeResult, BacktestOptions } from "@/strategies/types";
 export const dynamic = "force-dynamic";
 
 // ── Optimization goal: MINIMIZE maxConsecutiveSl (ascending sort) ──
-// Every strategy returns BacktestMetrics.maxConsecutiveSl via runBacktestEngine.
-// Future strategies must also return BacktestResult with this metric.
 
 function sortByGoal(a: OptimizeResult, b: OptimizeResult): number {
   // Always prefer results with trades over 0-trade results
@@ -16,31 +14,32 @@ function sortByGoal(a: OptimizeResult, b: OptimizeResult): number {
   return a.metrics.maxConsecutiveSl - b.metrics.maxConsecutiveSl;
 }
 
-// ── Helper: generate cartesian product of param values ──
-function generateCombos(paramVals: { name: string; values: number[] }[]): Record<string, number>[] {
-  const combos: Record<string, number>[] = [];
-  if (paramVals.length === 0) return combos;
-  const lengths = paramVals.map((pv) => pv.values.length);
-  const indices = new Array(paramVals.length).fill(0);
-  outer:
-  while (true) {
-    const combo: Record<string, number> = {};
-    for (let p = 0; p < paramVals.length; p++) {
-      combo[paramVals[p].name] = paramVals[p].values[indices[p]];
-    }
-    combos.push(combo);
-    for (let p = paramVals.length - 1; p >= 0; p--) {
-      indices[p]++;
-      if (indices[p] < lengths[p]) continue outer;
-      indices[p] = 0;
-    }
-    break;
+// ── Streaming combo helpers (no memory allocation) ──
+
+interface ParamDef { name: string; values: number[] }
+
+function comboFromIndices(params: ParamDef[], indices: number[]): Record<string, number> {
+  const combo: Record<string, number> = {};
+  for (let p = 0; p < params.length; p++) combo[params[p].name] = params[p].values[indices[p]];
+  return combo;
+}
+
+function countCombos(params: ParamDef[]): number {
+  let total = 1;
+  for (const p of params) total *= p.values.length;
+  return total;
+}
+
+function advanceIndices(indices: number[], lengths: number[]): boolean {
+  for (let p = indices.length - 1; p >= 0; p--) {
+    indices[p]++;
+    if (indices[p] < lengths[p]) return true;
+    indices[p] = 0;
   }
-  return combos;
+  return false;
 }
 
 // ── Global job store for polling-based progress ──────
-// Use globalThis to share across Turbopack module instances
 
 interface OptJob {
   status: "running" | "done" | "error";
@@ -49,7 +48,7 @@ interface OptJob {
   startTime: number;
   results?: OptimizeResult[];
   error?: string;
-  phase?: string; // e.g. "Pass 1/2 — coarse" or "Pass 2/2 — fine"
+  phase?: string;
 }
 
 const OPT_JOBS_KEY = "__backtester_opt_jobs__";
@@ -65,15 +64,14 @@ export function getOptJob(jobId: string): OptJob | undefined {
   return getJobsMap().get(jobId);
 }
 
-// Cleanup old jobs (keep last 10)
 function cleanupJobs() {
   const jobs = getJobsMap();
   if (jobs.size <= 10) return;
   const keys = [...jobs.keys()];
-  for (let i = 0; i < keys.length - 10; i++) {
-    jobs.delete(keys[i]);
-  }
+  for (let i = 0; i < keys.length - 10; i++) jobs.delete(keys[i]);
 }
+
+const yieldTick = () => new Promise<void>((r) => setTimeout(r, 0));
 
 export async function POST(request: NextRequest) {
   let body: any;
@@ -118,8 +116,8 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // Build value arrays for each parameter (no cap)
-  const paramValues: { name: string; values: number[] }[] = ranges.map((r) => {
+  // Build value arrays
+  const paramValues: ParamDef[] = ranges.map((r) => {
     const vals: number[] = [];
     const steps = Math.round((r.max - r.min) / r.step);
     for (let i = 0; i <= steps; i++) {
@@ -128,197 +126,203 @@ export async function POST(request: NextRequest) {
     return { name: r.name, values: vals };
   });
 
-  // Calculate total cartesian product size (for logging & stride calc)
-  let totalPossible = 1;
-  for (const pv of paramValues) totalPossible *= pv.values.length;
-  console.log(`[optimize] strategy=${strategyId} candles=${candles.length} totalPossible=${totalPossible} goal=minimize maxConsecutiveSl funnel=${funnel}`);
+  const totalPossible = countCombos(paramValues);
+  const nParams = paramValues.length;
+  const optOptions = options ?? ({} as BacktestOptions);
 
-  // Create job and return jobId immediately
+  console.log(`[optimize] strategy=${strategyId} candles=${candles.length} totalPossible=${totalPossible.toLocaleString()} funnel=${funnel}`);
+
+  // Auto-force funnel if brute force space is too large
+  const BRUTE_FORCE_CAP = 500_000;
+  const useFunnel = funnel || totalPossible > BRUTE_FORCE_CAP;
+
+  if (!funnel && totalPossible > BRUTE_FORCE_CAP) {
+    console.log(`[optimize] Auto-switching to funnel mode (totalPossible=${totalPossible.toLocaleString()} > ${BRUTE_FORCE_CAP})`);
+  }
+
+  // Create job
   const jobId = `opt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const job: OptJob = {
     status: "running",
     current: 0,
     total: 0,
     startTime: Date.now(),
-    phase: funnel ? "Starting..." : undefined,
+    phase: useFunnel ? "Starting..." : undefined,
   };
   cleanupJobs();
   getJobsMap().set(jobId, job);
 
-  // Run optimization in background (fire-and-forget)
-  if (funnel) {
+  if (useFunnel) {
     // ═══════════════════════════════════════════════
-    // ═══ FUNNEL MODE: 2-pass optimization ═══
-    // ═══ Goal: minimize maxConsecutiveSl ═══
+    // ═══ FUNNEL MODE: 2-pass streaming ═══
     // ═══════════════════════════════════════════════
 
     (async () => {
       const COARSE_TARGET = 5000;
       const TOP_N = 10;
       const FINE_RADIUS = 2;
-      const YIELD_EVERY = 10;
-      const yieldTick = () => new Promise<void>((r) => setTimeout(r, 0));
 
-      // Calculate stride so coarse pass has ~COARSE_TARGET combos
-      const nParams = paramValues.length;
+      // Calculate stride for coarse pass
       const stride = nParams > 0
         ? Math.max(1, Math.ceil(Math.pow(totalPossible / COARSE_TARGET, 1 / nParams)))
         : 1;
 
-      // Build coarse value arrays (every stride-th value)
-      const coarseParamValues = paramValues.map((pv) => {
+      // Build coarse param defs (every stride-th value) — streaming
+      const coarseParams: ParamDef[] = paramValues.map((pv) => {
         const coarse: number[] = [];
-        for (let i = 0; i < pv.values.length; i += stride) {
-          coarse.push(pv.values[i]);
-        }
-        // Always include last value if not already included
+        for (let i = 0; i < pv.values.length; i += stride) coarse.push(pv.values[i]);
         if (coarse.length > 0 && coarse[coarse.length - 1] !== pv.values[pv.values.length - 1]) {
           coarse.push(pv.values[pv.values.length - 1]);
         }
         return { name: pv.name, values: coarse };
       });
 
-      const coarseCombos = generateCombos(coarseParamValues);
-      const coarseTotal = coarseCombos.length;
+      const coarseTotal = countCombos(coarseParams);
+      const coarseLengths = coarseParams.map((p) => p.values.length);
 
-      // ── PASS 1: Coarse scan ──
-      job.phase = "Pass 1/2 — coarse";
+      // ── PASS 1: Coarse scan (streaming) ──
+      job.phase = `Pass 1/2 — coarse (stride ${stride})`;
       job.total = coarseTotal;
       job.current = 0;
 
       const pass1Results: OptimizeResult[] = [];
       let errors = 0;
+      const indices = new Array(nParams).fill(0);
 
-      for (let i = 0; i < coarseCombos.length; i++) {
+      for (let i = 0; i < coarseTotal; i++) {
         try {
-          const result = strategy.run(candles, coarseCombos[i], options ?? ({} as BacktestOptions));
+          const combo = comboFromIndices(coarseParams, indices);
+          const result = strategy.run(candles, combo, optOptions);
           pass1Results.push({ params: result.params, metrics: result.metrics });
         } catch (err) {
           errors++;
         }
         job.current = i + 1;
         if (job.status !== "running") break;
-        if (i % YIELD_EVERY === 0) await yieldTick();
+        advanceIndices(indices, coarseLengths);
+        if (i % 10 === 0) await yieldTick();
       }
 
-      // If cancelled during pass 1, save partial and stop
       if (job.status !== "running") {
         pass1Results.sort(sortByGoal);
         job.results = pass1Results.slice(0, 100);
         return;
       }
 
-      // Sort pass 1 by goal, pick top-N
+      // Pick top-N
       pass1Results.sort(sortByGoal);
-      const topResults = pass1Results.slice(0, TOP_N);
+      const topResults = pass1Results.filter(r => r.metrics.totalTrades > 0).slice(0, TOP_N);
+      if (topResults.length === 0) {
+        console.log(`[optimize/funnel] No results with trades in pass 1`);
+        job.results = pass1Results.slice(0, 100);
+        job.status = "done";
+        return;
+      }
 
-      // ── Generate fine combos around top-N ──
-      const fineCombos: Record<string, number>[] = [];
-      for (const top of topResults) {
-        const fineParamValues = ranges.map((r) => {
+      // ── PASS 2: Fine scan around top-N (streaming) ──
+      const fineParams: ParamDef[][] = topResults.map((top) =>
+        ranges.map((r) => {
           const center = top.params[r.name];
           const values: number[] = [];
           for (let d = -FINE_RADIUS; d <= FINE_RADIUS; d++) {
             const v = parseFloat((center + d * r.step).toFixed(10));
-            if (v >= r.min && v <= r.max) {
-              values.push(v);
-            }
+            if (v >= r.min && v <= r.max) values.push(v);
           }
           return { name: r.name, values };
-        });
-        fineCombos.push(...generateCombos(fineParamValues));
-      }
+        })
+      );
 
-      // Deduplicate fine combos (top results may have close params)
-      const seen = new Set<string>();
-      const uniqueFineCombos = fineCombos.filter((c) => {
-        const key = Object.entries(c).map(([k, v]) => `${k}=${v}`).join("|");
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
+      const fineTotals = fineParams.map((fp) => countCombos(fp));
+      const fineGrandTotal = fineTotals.reduce((a, b) => a + b, 0);
 
-      // ── PASS 2: Fine scan ──
       job.phase = "Pass 2/2 — fine";
-      job.total = coarseTotal + uniqueFineCombos.length;
+      job.total = coarseTotal + fineGrandTotal;
       job.current = coarseTotal;
 
-      const allResults = [...pass1Results]; // include pass 1 results
+      const allResults = [...pass1Results];
+      const seen = new Set<string>();
 
-      for (let i = 0; i < uniqueFineCombos.length; i++) {
-        try {
-          const result = strategy.run(candles, uniqueFineCombos[i], options ?? ({} as BacktestOptions));
-          allResults.push({ params: result.params, metrics: result.metrics });
-        } catch (err) {
-          errors++;
+      for (let g = 0; g < fineParams.length; g++) {
+        const fp = fineParams[g];
+        const ft = fineTotals[g];
+        const fLengths = fp.map((p) => p.values.length);
+        const fIndices = new Array(nParams).fill(0);
+
+        for (let i = 0; i < ft; i++) {
+          const combo = comboFromIndices(fp, fIndices);
+          const key = Object.entries(combo).map(([k, v]) => `${k}=${v}`).join("|");
+          if (!seen.has(key)) {
+            seen.add(key);
+            try {
+              const result = strategy.run(candles, combo, optOptions);
+              allResults.push({ params: result.params, metrics: result.metrics });
+            } catch (err) {
+              errors++;
+            }
+          }
+          job.current = coarseTotal + fineTotals.slice(0, g).reduce((a, b) => a + b, 0) + i + 1;
+          if (job.status !== "running") break;
+          advanceIndices(fIndices, fLengths);
+          if (i % 10 === 0) await yieldTick();
         }
-        job.current = coarseTotal + i + 1;
         if (job.status !== "running") break;
-        if (i % YIELD_EVERY === 0) await yieldTick();
       }
 
-      // Final sort by goal (minimize maxConsecutiveSl) and save
       allResults.sort(sortByGoal);
       job.results = allResults.slice(0, 100);
       job.status = "done";
-
-      console.log(`[optimize/funnel] Done: pass1=${coarseTotal}, fine=${uniqueFineCombos.length}, total=${allResults.length}, errors=${errors}, stride=${stride}`);
+      console.log(`[optimize/funnel] Done: coarse=${coarseTotal}, fineGroups=${fineParams.length}, total=${allResults.length}, errors=${errors}, stride=${stride}`);
     })();
   } else {
     // ═══════════════════════════════════════════════
-    // ═══ BRUTE FORCE: full grid search ═══
-    // ═══ Goal: minimize maxConsecutiveSl ═══
+    // ═══ BRUTE FORCE: streaming grid search ═══
     // ═══════════════════════════════════════════════
 
-    const combos = generateCombos(paramValues);
-    const total = combos.length;
+    const total = totalPossible;
     job.total = total;
+
+    const lengths = paramValues.map((p) => p.values.length);
 
     (async () => {
       const results: OptimizeResult[] = [];
       let errors = 0;
+      const indices = new Array(nParams).fill(0);
 
-      const YIELD_EVERY = 10;
-      const yieldTick = () => new Promise<void>((r) => setTimeout(r, 0));
-
-      for (let i = 0; i < combos.length; i++) {
+      for (let i = 0; i < total; i++) {
         try {
-          const result = strategy.run(candles, combos[i], options ?? ({} as BacktestOptions));
+          const combo = comboFromIndices(paramValues, indices);
+          const result = strategy.run(candles, combo, optOptions);
           results.push({ params: result.params, metrics: result.metrics });
         } catch (err) {
           errors++;
           if (errors <= 3) {
-            console.error(`[optimize] Error on combo ${i}:`, combos[i], err instanceof Error ? err.message : err);
+            const combo = comboFromIndices(paramValues, indices);
+            console.error(`[optimize] Error on combo ${i}:`, combo, err instanceof Error ? err.message : err);
           }
         }
 
         job.current = i + 1;
 
-        // Periodically sort and save partial results
         if (i % 50 === 0 && i > 0) {
           results.sort(sortByGoal);
           job.results = results.slice(0, 100);
         }
 
         if (job.status !== "running") break;
-        if (i % YIELD_EVERY === 0) await yieldTick();
+        advanceIndices(indices, lengths);
+        if (i % 10 === 0) await yieldTick();
       }
 
-      if (errors > 0) {
-        console.error(`[optimize] Total errors: ${errors}/${total}`);
-      }
+      if (errors > 0) console.error(`[optimize] Total errors: ${errors}/${total}`);
 
-      // Final sort by goal and save top 100
       results.sort(sortByGoal);
       job.results = results.slice(0, 100);
-
       job.status = "done";
       job.current = total;
       console.log(`[optimize] Completed: ${results.length} results, ${results.filter(r => r.metrics.totalTrades > 0).length} with trades`);
     })();
   }
 
-  // Return jobId immediately — client will poll for progress
   return new Response(JSON.stringify({ jobId }), {
     headers: { "Content-Type": "application/json" },
   });
@@ -342,8 +346,7 @@ export async function DELETE(request: NextRequest) {
   }
 
   if (job.status === "running") {
-    job.status = "done"; // mark as done so polling stops
-    // results are already populated by the running loop (partial)
+    job.status = "done";
   }
 
   return new Response(JSON.stringify({ ok: true, results: job.results ?? [] }), {
